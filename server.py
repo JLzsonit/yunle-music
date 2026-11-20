@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-云乐 CloudMusic-Box：本地音乐下载/播放服务
-- 粘贴任意链接（抖音/B站/音乐网站/视频链接）→ yt-dlp 下载 → ffmpeg 转 MP3（含封面）
-- 手机浏览器访问，可把歌曲「保存到手机」离线播放
-启动：python server.py   端口 8770
+云乐 Yunle：本地音乐下载/播放服务
+- 粘贴任意分享链接（抖音/快手/B站/小红书/微博/YouTube…或任意视频直链）
+- 解析链：yt-dlp（1755+站点）→ 通用网页嗅探 → 直链下载
+- 统一转 MP3（含封面、歌名、歌手、时长），手机端可保存到本地离线播放
+启动：python server.py
 """
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -14,10 +16,14 @@ import threading
 import time
 import uuid
 from pathlib import Path
+from urllib.parse import urlparse
 
+import requests
 from flask import Flask, jsonify, request, send_file, send_from_directory
+from mutagen.id3 import APIC, ID3, TIT2, TPE1
 from mutagen.mp3 import MP3
 
+import channels_parser
 import yt_dlp
 
 BASE = Path(__file__).resolve().parent
@@ -27,6 +33,7 @@ MUSIC_DIR.mkdir(exist_ok=True)
 ICON_DIR.mkdir(parents=True, exist_ok=True)
 LIB_FILE = BASE / "library.json"
 PL_FILE = BASE / "playlists.json"
+CONFIG_FILE = BASE / "config.json"
 
 FFMPEG = shutil.which("ffmpeg")
 if not FFMPEG:
@@ -40,7 +47,11 @@ if not FFMPEG:
         "Microsoft/WinGet/Packages/*FFmpeg*/ffmpeg-*/bin/ffmpeg.exe"))
     FFMPEG = str(cands[0]) if cands else "ffmpeg"
 
+MOBILE_UA = ("Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) "
+             "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1")
+
 app = Flask(__name__, static_folder="static", static_url_path="/static")
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 允许上传 1GB 以内的视频
 
 _lock = threading.Lock()
 
@@ -61,7 +72,33 @@ def save_json(path, data):
 
 library = load_json(LIB_FILE, [])
 playlists = load_json(PL_FILE, [])
-jobs = {}  # job_id -> {status, progress, title, error}
+config = load_json(CONFIG_FILE, {})
+jobs = {}
+
+# 平台识别：用于友好错误提示
+PLATFORM_GUESS = [
+    (r"channels\.weixin\.qq\.com|finder\.video\.qq\.com|weixin110|weixin\.qq\.com/sph", "微信视频号"),
+    (r"kuaishou\.com|chenzhongtech\.com|gifshow\.com", "快手"),
+    (r"douyin\.com|iesdouyin\.com", "抖音"),
+    (r"bilibili\.com|b23\.tv", "B站"),
+    (r"xiaohongshu\.com|xhslink\.com", "小红书"),
+    (r"weibo\.com|weibo\.cn", "微博"),
+    (r"ixigua\.com", "西瓜视频"),
+    (r"youtube\.com|youtu\.be", "YouTube"),
+    (r"tiktok\.com", "TikTok"),
+    (r"instagram\.com", "Instagram"),
+    (r"x\.com|twitter\.com", "X/Twitter"),
+    (r"music\.163\.com", "网易云音乐"),
+    (r"y\.qq\.com|qq\.com/n/ryqq", "QQ音乐"),
+    (r"kugou\.com", "酷狗音乐"),
+]
+
+
+def guess_platform(url):
+    for pat, name in PLATFORM_GUESS:
+        if re.search(pat, url):
+            return name
+    return "通用"
 
 
 def get_local_ip():
@@ -75,112 +112,481 @@ def get_local_ip():
         return "127.0.0.1"
 
 
-def do_download(job_id, url, use_cookies):
-    """后台线程：下载 → 转 MP3 → 提取封面 → 写入曲库"""
+# ---------------- 解析工具 ----------------
+
+MEDIA_EXT_RE = re.compile(r"\.(mp4|m4a|mp3|aac|flac|wav|ogg|webm|mkv|mov|m3u8|ts)(\?|$)", re.I)
+HTML_MEDIA_RE = re.compile(
+    r'(?:https?:)?(?:\\u002F|\\/|/){2}[^"\'\s<>]+?\.(?:mp4|m3u8|m4a|mp3)(?:\?[^"\'\s<>]*)?', re.I)
+
+
+def http_get(url, timeout=25, ua=MOBILE_UA):
+    return requests.get(url, headers={
+        "User-Agent": ua,
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+    }, timeout=timeout, allow_redirects=True)
+
+
+def probe_page(url):
+    """网页嗅探：抓 og:title / og:image / 页面里的媒体地址（快手等无解析器的站点兜底）"""
+    meta = {"title": None, "cover": None, "candidates": [], "final_url": url}
     try:
-        jobs[job_id].update(status="downloading", progress=0, title="正在解析链接…")
+        r = http_get(url)
+        meta["final_url"] = r.url
+        html = r.text
+        ct = r.headers.get("Content-Type", "")
+        # 直接就是媒体文件
+        if "video" in ct or "audio" in ct or MEDIA_EXT_RE.search(urlparse(r.url).path or ""):
+            meta["candidates"].append(r.url)
+            meta["direct"] = True
+            if "video" in ct or "audio" in ct:
+                meta["content_type"] = ct
+            return meta
+        for prop, key in (("og:title", "title"), ('"caption"', "title"),
+                          ("og:image", "cover"), ('"coverUrl"', "cover"),
+                          ('"cover"', "cover")):
+            m = re.search(rf'{prop}"?\s*(?:content=|:)\s*"([^"]{{2,200}})"', html)
+            if m and not meta[key]:
+                v = m.group(1).replace("\\u002F", "/").replace("\\/", "/")
+                if v.startswith("//"):
+                    v = "https:" + v
+                if key == "title":
+                    v = v.encode().decode("unicode_escape", errors="ignore") if "\\u" in v else v
+                meta[key] = v
+        # 页面内媒体地址（去重，优先无水印/高清）
+        cands = []
+        for m in HTML_MEDIA_RE.finditer(html):
+            u = m.group(0).replace("\\u002F", "/").replace("\\/", "/")
+            if u.startswith("//"):
+                u = "https:" + u
+            if u not in cands:
+                cands.append(u)
+        meta["candidates"] = cands[:8]
+    except Exception as e:
+        meta["error"] = str(e)[:150]
+    return meta
+
+
+def extract_cover(mp3, job_id):
+    """从 MP3 内嵌封面导出 jpg"""
+    cov = ICON_DIR / f"{job_id}.jpg"
+    try:
+        r = subprocess.run(
+            [FFMPEG, "-y", "-v", "error", "-i", str(mp3), "-an",
+             "-frames:v", "1", "-q:v", "3", str(cov)],
+            capture_output=True, timeout=60,
+        )
+        if r.returncode == 0 and cov.exists() and cov.stat().st_size > 1000:
+            return f"{job_id}.jpg"
+    except Exception:
+        pass
+    return None
+
+
+def save_remote_cover(cover_url, job_id):
+    """下载网页封面作为本地封面"""
+    try:
+        r = http_get(cover_url, timeout=20)
+        if r.ok and len(r.content) > 1000:
+            f = ICON_DIR / f"{job_id}.jpg"
+            f.write_bytes(r.content)
+            return f"{job_id}.jpg"
+    except Exception:
+        pass
+    return None
+
+
+def ydl_opts(job_id, use_cookies, hook):
+    opts = {
+        "format": "bestaudio/best",
+        "outtmpl": str(MUSIC_DIR / f"{job_id}.%(ext)s"),
+        "ffmpeg_location": str(Path(FFMPEG).parent),
+        "writethumbnail": True,
+        "postprocessors": [
+            {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
+            {"key": "EmbedThumbnail", "already_have_thumbnail": True},
+        ],
+        "progress_hooks": [hook],
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "retries": 2,
+        "socket_timeout": 25,
+        "geo_bypass": True,
+    }
+    if use_cookies:
+        opts["cookiesfrombrowser"] = ("chrome",)
+    return opts
+
+
+def download_media(url, dest, job_id, referer=None, ua=MOBILE_UA):
+    """流式下载媒体文件，带进度回报"""
+    headers = {"User-Agent": ua, "Accept": "*/*"}
+    if referer:
+        headers["Referer"] = referer
+    with requests.get(url, headers=headers, stream=True, timeout=60, allow_redirects=True) as r:
+        r.raise_for_status()
+        total = int(r.headers.get("Content-Length") or 0)
+        done = 0
+        tick = time.time()
+        tick_bytes = 0
+        with open(dest, "wb") as f:
+            for chunk in r.iter_content(chunk_size=262144):
+                if not chunk:
+                    continue
+                f.write(chunk)
+                done += len(chunk)
+                tick_bytes += len(chunk)
+                now = time.time()
+                if now - tick > 0.5:
+                    speed = int(tick_bytes / (now - tick))
+                    tick, tick_bytes = now, 0
+                    upd = {"speed": speed}
+                    if total:
+                        upd["progress"] = min(5 + int(done / total * 80), 88)
+                    jobs[job_id].update(upd)
+    return dest
+
+
+def tag_mp3(mp3_path, title, artist, cover_bytes=None):
+    """写入歌名/歌手标签，并把封面嵌入 MP3（锁屏、系统播放器都能显示）"""
+    try:
+        try:
+            tags = ID3(str(mp3_path))
+        except Exception:
+            tags = ID3()
+        if title:
+            tags.add(TIT2(encoding=3, text=str(title)))
+        if artist:
+            tags.add(TPE1(encoding=3, text=str(artist)))
+        if cover_bytes and len(cover_bytes) > 1000:
+            tags.add(APIC(encoding=3, mime="image/jpeg", type=3, desc="Cover",
+                          data=cover_bytes))
+        tags.save(str(mp3_path))
+    except Exception:
+        pass
+
+
+def add_song(job_id, title, artist, duration, cover, url, plat, mp3):
+    """把转换完成的 MP3 写入曲库"""
+    try:
+        duration = int(MP3(str(mp3)).info.length)
+    except Exception:
+        duration = int(duration or 0)
+    song = {
+        "id": job_id,
+        "title": (title or "未知标题").strip()[:150],
+        "artist": (artist or plat or "未知")[:80],
+        "duration": duration,
+        "cover": cover or "default",
+        "size": mp3.stat().st_size,
+        "added": int(time.time()),
+        "source": url,
+        "platform": plat,
+    }
+    library.insert(0, song)
+    save_json(LIB_FILE, library)
+    jobs[job_id].update(status="done", progress=100, title=song["title"], song_id=job_id)
+    return song
+
+
+def download_channels(job_id, url):
+    """微信视频号专用链路：元宝解析 -> 视频号 preview -> 直链 -> MP3"""
+    cookie = (config.get("yuanbao_cookie") or "").strip()
+    try:
+        jobs[job_id].update(status="processing", progress=6, title="正在解析视频号分享链接…",
+                            platform="微信视频号")
+        info = channels_parser.resolve(url, cookie)
+        jobs[job_id].update(progress=12, title=info["title"] or "视频号内容", stage="下载视频中")
+
+        src = MUSIC_DIR / f"{job_id}.src.mp4"
+        download_media(info["video_url"], src, job_id,
+                       referer="https://channels.weixin.qq.com/",
+                       ua=channels_parser.MOBILE_UA)
+        jobs[job_id].update(status="processing", progress=90, title="正在转换为 MP3…", stage="转码中")
+
+        mp3 = MUSIC_DIR / f"{job_id}.mp3"
+        r = subprocess.run(
+            [FFMPEG, "-y", "-v", "error", "-i", str(src), "-vn",
+             "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)],
+            capture_output=True, timeout=600,
+        )
+        if r.returncode != 0 or not mp3.exists():
+            err = (r.stderr or b"").decode("utf-8", "ignore")[:200]
+            raise RuntimeError(f"视频转音频失败：{err or 'ffmpeg 执行异常'}")
+
+        # 封面：优先视频首帧，其次接口给的封面图
+        cover = extract_cover(mp3, job_id)
+        cover_bytes = None
+        if cover:
+            try:
+                cover_bytes = (ICON_DIR / cover).read_bytes()
+            except Exception:
+                cover_bytes = None
+        if not cover and info.get("cover"):
+            cover = save_remote_cover(info["cover"], job_id)
+            if cover:
+                try:
+                    cover_bytes = (ICON_DIR / cover).read_bytes()
+                except Exception:
+                    pass
+
+        tag_mp3(mp3, info["title"], info["author"], cover_bytes)
+        src.unlink(missing_ok=True)
+        add_song(job_id, info["title"], info["author"], info["duration"],
+                 cover, url, "微信视频号", mp3)
+    except channels_parser.ChannelsError as e:
+        jobs[job_id].update(status="error", error=str(e), platform="微信视频号")
+    except requests.RequestException as e:
+        jobs[job_id].update(status="error", platform="微信视频号",
+                            error=f"下载视频号视频失败（网络问题）：{str(e)[:150]}")
+    except Exception as e:
+        msg = str(e)
+        jobs[job_id].update(status="error", platform="微信视频号",
+                            error=msg[:300] if msg else "视频号解析失败")
+
+
+def do_download(job_id, url, use_cookies):
+    plat = guess_platform(url)
+    if plat == "微信视频号":
+        download_channels(job_id, url)
+        return
+    try:
+        jobs[job_id].update(status="downloading", progress=3, title=f"正在解析{plat}链接…", platform=plat)
 
         def hook(d):
             if d["status"] == "downloading":
                 total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 done = d.get("downloaded_bytes", 0)
-                pct = int(done / total * 90) if total else 0
+                pct = 3 + int(done / total * 87) if total else jobs[job_id]["progress"]
                 info = d.get("info_dict") or {}
-                jobs[job_id].update(
-                    progress=pct,
-                    title=info.get("title") or jobs[job_id]["title"],
-                    eta=d.get("eta"),
-                    speed=d.get("speed"),
-                )
+                jobs[job_id].update(progress=pct,
+                                    title=info.get("title") or jobs[job_id]["title"],
+                                    speed=d.get("speed"))
             elif d["status"] == "finished":
-                jobs[job_id].update(status="processing", progress=92, title="正在转换音频…")
+                jobs[job_id].update(status="processing", progress=92, title="正在转换为 MP3…")
 
-        opts = {
-            "format": "bestaudio/best",
-            "outtmpl": str(MUSIC_DIR / f"{job_id}.%(ext)s"),
-            "ffmpeg_location": str(Path(FFMPEG).parent),
-            "writethumbnail": True,
-            "postprocessors": [
-                {"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"},
-                {"key": "EmbedThumbnail", "already_have_thumbnail": True},
-            ],
-            "progress_hooks": [hook],
-            "noplaylist": True,
-            "quiet": True,
-            "no_warnings": True,
-            "retries": 3,
-            "socket_timeout": 30,
-        }
-        if use_cookies:
-            opts["cookiesfrombrowser"] = ("chrome",)
-
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+        info, meta = None, {}
+        # ---- 第一步：yt-dlp 直接解析（支持 1755+ 站点）----
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts(job_id, use_cookies, hook)) as ydl:
+                info = ydl.extract_info(url, download=True)
+        except Exception as e1:
+            first_err = str(e1)
+            # ---- 第二步：网页嗅探兜底（快手等）----
+            jobs[job_id].update(progress=8, title=f"{plat}链接转通用解析…")
+            meta = probe_page(url)
+            cand = None
+            for c in meta.get("candidates", []):
+                if ".m3u8" in c or ".mp4" in c:
+                    cand = c
+                    break
+            if not cand and meta.get("candidates"):
+                cand = meta["candidates"][0]
+            if cand:
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts(job_id, use_cookies, hook)) as ydl:
+                        info = ydl.extract_info(cand, download=True)
+                except Exception:
+                    info = None
+                if info is None:
+                    # ---- 第三步：直接下载媒体再转码 ----
+                    tmp = MUSIC_DIR / f"{job_id}.src"
+                    r = http_get(cand, timeout=120)
+                    if not r.ok:
+                        raise RuntimeError(first_err)
+                    tmp.write_bytes(r.content)
+                    mp3 = MUSIC_DIR / f"{job_id}.mp3"
+                    subprocess.run(
+                        [FFMPEG, "-y", "-v", "error", "-i", str(tmp),
+                         "-vn", "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)],
+                        capture_output=True, timeout=300)
+                    tmp.unlink(missing_ok=True)
+                    info = {"title": meta.get("title") or url, "uploader": plat,
+                            "duration": 0, "thumbnail": meta.get("cover")}
+            else:
+                if plat == "微信视频号":
+                    raise RuntimeError(
+                        "微信视频号不支持：其视频地址经过加密并绑定微信客户端，"
+                        "任何第三方工具（包括本应用）都无法解析。"
+                        "建议在微信里打开视频号内容，用手机录屏或让对方发原视频文件。")
+                if plat == "快手":
+                    raise RuntimeError(
+                        "快手解析失败：快手对分享页做了强反爬限制。"
+                        "可以在电脑浏览器打开该链接（登录状态），勾选下载页的"
+                        "「使用浏览器登录状态」后再试；或把视频另存为文件后直接上传/使用直链。")
+                raise RuntimeError(
+                    f"该链接解析失败（{plat}）。原因：{first_err[:200]}\n"
+                    "提示：可尝试在电脑浏览器登录该平台后，勾选「使用浏览器登录状态」重试。")
 
         mp3 = MUSIC_DIR / f"{job_id}.mp3"
         if not mp3.exists():
-            raise RuntimeError("转换后的 MP3 文件未找到，该链接可能不受支持")
+            raise RuntimeError("转换后的 MP3 未找到，该链接可能不受支持")
 
-        # 提取封面图
-        cover_name = "default"
-        try:
-            cov = ICON_DIR / f"{job_id}.jpg"
-            r = subprocess.run(
-                [FFMPEG, "-y", "-v", "error", "-i", str(mp3), "-an",
-                 "-frames:v", "1", "-q:v", "3", str(cov)],
-                capture_output=True, timeout=60,
-            )
-            if r.returncode == 0 and cov.exists() and cov.stat().st_size > 1000:
-                cover_name = f"{job_id}.jpg"
-        except Exception:
-            pass
+        # ---- 封面：优先内嵌封面 → 网页 og:image ----
+        cover = extract_cover(mp3, job_id)
+        if not cover:
+            thumb = (info or {}).get("thumbnail") or meta.get("cover")
+            if thumb:
+                cover = save_remote_cover(thumb, job_id)
 
-        # 读取时长
         try:
             duration = int(MP3(str(mp3)).info.length)
         except Exception:
-            duration = int(info.get("duration") or 0)
+            duration = int((info or {}).get("duration") or 0)
 
+        i = info or {}
+        title = (i.get("title") or meta.get("title") or "未知标题").strip()
+        artist = (i.get("uploader") or i.get("artist") or i.get("creator")
+                  or i.get("uploader_id") or meta.get("artist") or plat)
         song = {
             "id": job_id,
-            "title": info.get("title") or "未知标题",
-            "artist": info.get("uploader") or info.get("artist") or info.get("creator") or "未知歌手",
+            "title": title,
+            "artist": artist,
             "duration": duration,
-            "cover": cover_name,
+            "cover": cover or "default",
             "size": mp3.stat().st_size,
             "added": int(time.time()),
             "source": url,
+            "platform": plat,
         }
         library.insert(0, song)
         save_json(LIB_FILE, library)
         jobs[job_id].update(status="done", progress=100, title=song["title"], song_id=job_id)
     except Exception as e:
         msg = str(e)
-        if len(msg) > 300:
-            msg = msg[:300] + "…"
-        jobs[job_id].update(status="error", error=msg)
+        if len(msg) > 400:
+            msg = msg[:400] + "…"
+        jobs[job_id].update(status="error", error=msg, platform=plat)
 
+
+# ---------------- 路由 ----------------
 
 @app.get("/api/info")
 def api_info():
-    return jsonify({"ip": get_local_ip(), "count": len(library)})
+    return jsonify({"ip": get_local_ip(), "count": len(library), "version": "1.2.0",
+                    "channels_cookie": bool((config.get("yuanbao_cookie") or "").strip())})
+
+
+@app.get("/api/config")
+def api_config_get():
+    ck = (config.get("yuanbao_cookie") or "").strip()
+    masked = ""
+    if ck:
+        # 只回显首尾，避免整段凭证暴露在页面上
+        masked = (ck[:24] + "…" + ck[-8:]) if len(ck) > 40 else "已配置"
+    return jsonify({"channels_cookie_set": bool(ck), "channels_cookie_preview": masked})
+
+
+@app.post("/api/config")
+def api_config_set():
+    global config
+    data = request.json or {}
+    if "yuanbao_cookie" in data:
+        config["yuanbao_cookie"] = (data.get("yuanbao_cookie") or "").strip()
+        save_json(CONFIG_FILE, config)
+    return jsonify({"ok": True, "channels_cookie_set": bool(config.get("yuanbao_cookie"))})
+
+
+def convert_local_file(jid, src_path, orig_name):
+    """本地上传的视频/音频 -> MP3（视频号等无法解析时的万能兜底）"""
+    try:
+        jobs[jid].update(status="processing", progress=30, title=f"正在转换 {orig_name}…")
+        mp3 = MUSIC_DIR / f"{jid}.mp3"
+        r = subprocess.run(
+            [FFMPEG, "-y", "-v", "error", "-i", str(src_path), "-vn",
+             "-c:a", "libmp3lame", "-b:a", "192k", str(mp3)],
+            capture_output=True, timeout=900,
+        )
+        if r.returncode != 0 or not mp3.exists():
+            err = (r.stderr or b"").decode("utf-8", "ignore")[:200]
+            raise RuntimeError(f"转换失败：{err or 'ffmpeg 执行异常'}")
+
+        # 封面：优先源文件自带封面/首帧，其次音频内嵌
+        cover = None
+        cov = ICON_DIR / f"{jid}.jpg"
+        try:
+            subprocess.run([FFMPEG, "-y", "-v", "error", "-i", str(src_path), "-an",
+                            "-frames:v", "1", "-q:v", "3", str(cov)],
+                           capture_output=True, timeout=90)
+            if cov.exists() and cov.stat().st_size > 1000:
+                cover = f"{jid}.jpg"
+        except Exception:
+            pass
+        if not cover:
+            cover = extract_cover(mp3, jid)
+        cover_bytes = None
+        if cover:
+            try:
+                cover_bytes = (ICON_DIR / cover).read_bytes()
+            except Exception:
+                pass
+
+        title = re.sub(r"\.[a-zA-Z0-9]{2,5}$", "", orig_name).strip() or "本地上传"
+        title = re.sub(r"[_\s]+", " ", title)[:120]
+        tag_mp3(mp3, title, "本地上传", cover_bytes)
+        src_path.unlink(missing_ok=True)
+        add_song(jid, title, "本地上传", 0, cover, "local:" + orig_name, "本地上传", mp3)
+    except Exception as e:
+        src_path.unlink(missing_ok=True)
+        jobs[jid].update(status="error", error=str(e)[:300], platform="本地上传")
+
+
+@app.post("/api/upload")
+def api_upload():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify({"error": "没有收到文件"}), 400
+    jid = uuid.uuid4().hex[:12]
+    raw = MUSIC_DIR / f"{jid}.upload"
+    f.save(str(raw))
+    if raw.stat().st_size < 1024:
+        raw.unlink(missing_ok=True)
+        return jsonify({"error": "文件为空或上传失败"}), 400
+
+    jobs[jid] = {"id": jid, "status": "queued", "progress": 10,
+                 "title": f"已上传 {f.filename}", "platform": "本地上传",
+                 "url": "local"}
+
+    def run():
+        # 先探测时长做展示（ffprobe 用 ffmpeg 同目录）
+        convert_local_file(jid, raw, f.filename)
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"jobs": [jid]})
 
 
 @app.post("/api/download")
 def api_download():
-    url = (request.json or {}).get("url", "").strip()
-    use_cookies = bool((request.json or {}).get("cookies"))
-    if not url.startswith(("http://", "https://")):
-        return jsonify({"error": "请输入有效的 http/https 链接"}), 400
-    job_id = uuid.uuid4().hex[:12]
-    jobs[job_id] = {"id": job_id, "status": "queued", "progress": 0, "title": "排队中…"}
-    threading.Thread(target=do_download, args=(job_id, url, use_cookies), daemon=True).start()
-    return jsonify({"job": job_id})
+    data = request.json or {}
+    raw = data.get("urls") or data.get("url") or ""
+    if isinstance(raw, str):
+        urls = [u.strip() for u in re.split(r"[\n\r\s]+", raw) if u.strip()]
+    else:
+        urls = [str(u).strip() for u in raw if str(u).strip()]
+    use_cookies = bool(data.get("cookies"))
+    urls = [u for u in urls if u.startswith(("http://", "https://"))][:10]
+    if not urls:
+        return jsonify({"error": "请粘贴有效的 http/https 分享链接"}), 400
+    out = []
+    for u in urls:
+        jid = uuid.uuid4().hex[:12]
+        jobs[jid] = {"id": jid, "status": "queued", "progress": 0,
+                     "title": "排队中…", "platform": guess_platform(u), "url": u}
+        threading.Thread(target=do_download, args=(jid, u, use_cookies), daemon=True).start()
+        out.append(jid)
+    return jsonify({"jobs": out})
 
 
 @app.get("/api/jobs")
 def api_jobs():
     return jsonify(list(jobs.values()))
+
+
+@app.get("/api/platform")
+def api_platform():
+    u = request.args.get("url", "")
+    return jsonify({"platform": guess_platform(u)})
 
 
 @app.get("/api/library")
@@ -191,12 +597,8 @@ def api_library():
 @app.delete("/api/song/<sid>")
 def api_delete(sid):
     global library
-    for f in (MUSIC_DIR / f"{sid}.mp3",):
-        if f.exists():
-            f.unlink(missing_ok=True)
-    for p in list(library):
-        if p["id"] == sid:
-            library.remove(p)
+    (MUSIC_DIR / f"{sid}.mp3").unlink(missing_ok=True)
+    library = [p for p in library if p["id"] != sid]
     save_json(LIB_FILE, library)
     return jsonify({"ok": True})
 
@@ -263,7 +665,6 @@ def index():
 
 @app.get("/<path:filename>")
 def static_root(filename):
-    """根路径静态文件：manifest.json / sw.js / icons/... 等（sw 必须在根作用域）"""
     resp = send_from_directory("static", filename)
     if filename == "sw.js":
         resp.headers["Service-Worker-Allowed"] = "/"
@@ -277,7 +678,6 @@ if __name__ == "__main__":
     print("  云乐 · 链接变音乐")
     print(f"  本机访问:   http://127.0.0.1:{port}")
     if port == 8770:
-        print(f"  手机访问:   http://{ip}:8770")
-        print("  (手机与电脑需在同一 Wi-Fi 下)")
+        print(f"  手机访问:   http://{ip}:{port}")
     print("=" * 52)
     app.run(host="0.0.0.0", port=port, threaded=True)

@@ -29,6 +29,7 @@
     </div>
     <div class="lib-actions">
       <button class="ghost-btn" id="cacheAllBtn">⬇ 全部存到手机</button>
+      <button class="ghost-btn" id="offlineFilterBtn">📴 只看离线</button>
       <span id="offlineStat" class="offline-stat"></span>
     </div>
     <ul class="song-list" id="songList"></ul>
@@ -43,14 +44,43 @@
   <section class="view" id="view-dl" hidden>
     <div class="dl-card">
       <h2>粘贴链接，变成音乐</h2>
-      <p class="hint">支持抖音 · B站 · 视频号 · 各类音乐网站的视频/音频链接</p>
+      <p class="hint">抖音 · 快手 · B站 · 小红书 · 微博 · 视频号 · YouTube…<br>只要是能分享出链接的，都试试；支持一次粘贴多条（每行一条）</p>
       <div class="url-row">
-        <input id="urlInput" type="url" placeholder="粘贴视频或音乐链接…" autocomplete="off">
-        <button id="pasteBtn" class="ghost-btn">粘贴</button>
+        <textarea id="urlInput" rows="3" placeholder="粘贴分享链接，可多行…" autocomplete="off"></textarea>
       </div>
-      <label class="cookie-row"><input type="checkbox" id="cookieChk"> 优先使用电脑浏览器登录状态（部分网站会员/完整歌曲需要）</label>
-      <button id="downloadBtn" class="primary-btn">开始下载</button>
-      <div class="support-note">⚠ 仅限个人欣赏，请尊重版权；VIP/加密内容可能无法下载。</div>
+      <div class="dl-btns">
+        <button id="pasteBtn" class="ghost-btn">粘贴</button>
+        <button id="downloadBtn" class="primary-btn">开始下载</button>
+      </div>
+      <label class="cookie-row"><input type="checkbox" id="cookieChk"> 使用电脑浏览器登录状态（会员/完整版/强反爬平台需要）</label>
+
+      <!-- 视频号专用：解析需要一次元宝登录态 -->
+      <details class="wx-panel" id="wxPanel">
+        <summary>视频号解析设置 <span class="wx-badge" id="wxBadge">未配置</span></summary>
+        <div class="wx-body">
+          <p class="wx-tip">视频号的视频地址不对网页公开，必须借腾讯元宝的登录态换取。只需配置一次：</p>
+          <ol class="wx-steps">
+            <li>电脑浏览器打开 <b>yuanbao.tencent.com</b>，用微信扫码登录</li>
+            <li>按 F12 → 切到 <b>Network(网络)</b> → 随便点一条请求</li>
+            <li>在 <b>Request Headers</b> 里找到 <b>cookie:</b>，整段复制</li>
+            <li>粘贴到下面保存，然后回上面贴视频号分享链接下载</li>
+          </ol>
+          <textarea id="wxCookieInput" rows="3" placeholder="粘贴 cookie: 后面的整段内容…" autocomplete="off"></textarea>
+          <div class="wx-actions">
+            <button id="wxSaveBtn" class="ghost-btn">保存 Cookie</button>
+            <button id="wxClearBtn" class="ghost-btn">清除</button>
+            <span class="wx-status" id="wxStatus"></span>
+          </div>
+        </div>
+      </details>
+
+      <!-- 万能兜底：本地视频/音频直接转 -->
+      <div class="upload-row">
+        <input type="file" id="fileInput" accept="video/*,audio/*" hidden>
+        <button id="uploadBtn" class="ghost-btn">📁 上传手机里的视频/录屏转音频</button>
+      </div>
+
+      <div class="support-note">⚠ 仅限个人欣赏，请尊重版权；VIP 加密内容无法下载。视频号需先按上面配置一次 Cookie。</div>
     </div>
     <ul class="job-list" id="jobList"></ul>
   </section>

@@ -38,6 +38,10 @@ input,select{font-family:inherit;font-size:15px}
 .search-row input:focus,.url-row input:focus{border-color:var(--acc)}
 .lib-actions{display:flex;align-items:center;gap:10px;margin:10px 2px}
 .offline-stat{font-size:12px;color:var(--sub)}
+.plat-tag{
+  font-size:10px;color:var(--acc2);border:1px solid var(--acc);border-radius:5px;
+  padding:1px 5px;margin-right:6px;vertical-align:middle;flex-shrink:0;
+}
 
 .ghost-btn{
   background:var(--card);border:1px solid #2c2c3c;border-radius:99px;
@@ -86,7 +90,15 @@ input,select{font-family:inherit;font-size:15px}
 .dl-card h2{font-size:18px;margin-bottom:6px}
 .dl-card .hint{font-size:12px;color:var(--sub);margin-bottom:14px}
 .url-row{display:flex;gap:8px;align-items:center}
-.url-row input{flex:1;min-width:0}
+.url-row textarea{
+  width:100%;background:var(--card2);border:1px solid #2c2c3c;color:var(--txt);
+  border-radius:var(--radius);padding:12px 14px;font-size:14px;outline:none;
+  resize:vertical;font-family:inherit;line-height:1.5;
+}
+.url-row textarea:focus{border-color:var(--acc)}
+.dl-btns{display:flex;gap:10px;margin-top:12px;align-items:center}
+.dl-btns .ghost-btn{flex-shrink:0}
+.dl-btns .primary-btn{margin-top:0;flex:1;padding:13px}
 .cookie-row{display:flex;gap:8px;align-items:flex-start;font-size:12px;color:var(--sub);margin-top:12px;line-height:1.5}
 .cookie-row input{margin-top:2px;accent-color:var(--acc)}
 .support-note{font-size:11px;color:#6d6d80;margin-top:12px;line-height:1.5}
@@ -195,3 +207,32 @@ input,select{font-family:inherit;font-size:15px}
   z-index:99;white-space:nowrap;max-width:90vw;overflow:hidden;text-overflow:ellipsis;
   box-shadow:0 6px 20px rgba(0,0,0,.4);
 }
+
+/* ---------- 视频号设置面板 ---------- */
+.wx-panel{margin-top:12px;background:var(--card2);border-radius:12px;padding:0 12px}
+.wx-panel>summary{
+  list-style:none;cursor:pointer;padding:11px 0;font-size:13.5px;font-weight:600;
+  display:flex;align-items:center;justify-content:space-between;color:var(--txt);
+}
+.wx-panel>summary::-webkit-details-marker{display:none}
+.wx-panel>summary::after{content:"›";font-size:17px;color:var(--sub);transition:.2s}
+.wx-panel[open]>summary::after{transform:rotate(90deg)}
+.wx-badge{font-size:11px;font-weight:500;color:#ffb86b;background:rgba(255,184,107,.14);
+  padding:2px 8px;border-radius:99px;margin-left:auto;margin-right:8px}
+.wx-badge.on{color:var(--ok);background:rgba(62,207,142,.14)}
+.wx-body{padding:0 0 12px}
+.wx-tip{font-size:12px;color:var(--sub);line-height:1.6;margin-bottom:8px}
+.wx-steps{font-size:12px;color:var(--sub);line-height:1.75;padding-left:16px;margin-bottom:10px}
+.wx-steps b{color:var(--acc2);font-weight:600}
+.wx-body textarea{
+  width:100%;background:var(--card);border:1px solid rgba(255,255,255,.07);border-radius:10px;
+  color:var(--txt);font-size:12px;padding:9px 10px;resize:vertical;line-height:1.5;
+}
+.wx-actions{display:flex;align-items:center;gap:8px;margin-top:9px;flex-wrap:wrap}
+.wx-status{font-size:11.5px;color:var(--sub)}
+.wx-status.ok{color:var(--ok)}
+.wx-status.err{color:var(--danger)}
+
+/* ---------- 上传兜底 ---------- */
+.upload-row{margin-top:10px}
+.upload-row .ghost-btn{width:100%;font-size:13px;padding:10px}

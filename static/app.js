@@ -39,6 +39,7 @@ const state = {
   queue: [], pos: -1, playing: false,
   mode: localStorage.getItem("yl_mode") || "order", // order | loop | one | random
   currentJobSong: null, currentPl: null,
+  onlyOffline: false, serverOk: true,
 };
 const $ = (id) => document.getElementById(id);
 const fmt = (s) => { s = Math.max(0, Math.round(s || 0)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
@@ -50,22 +51,39 @@ function toast(msg) {
 const serverUrl = location.origin;
 const coverUrl = (c) => `${serverUrl}/api/cover/${encodeURIComponent(c)}`;
 
-/* ---------- 数据加载 ---------- */
-async function loadLibrary() { state.library = await (await fetch("/api/library")).json(); }
-async function loadPlaylists() { state.playlists = await (await fetch("/api/playlists")).json(); }
+/* ---------- 数据加载（服务器优先，离线时回退到手机本地库） ---------- */
+async function loadLibrary() {
+  try {
+    state.library = await (await fetch("/api/library")).json();
+    state.serverOk = true;
+  } catch (e) {
+    // 服务器不可达：用手机本地已保存的歌曲构建曲库
+    const off = await idb.all();
+    state.library = off.map((o) => ({
+      id: o.id, title: o.title, artist: o.artist, duration: o.duration || 0,
+      cover: "default", size: 0, offlineOnly: true,
+    }));
+    state.serverOk = false;
+    setOnline(false);
+  }
+}
+async function loadPlaylists() {
+  try { state.playlists = await (await fetch("/api/playlists")).json(); }
+  catch { state.playlists = state.playlists || []; }
+}
 
 /* ---------- 曲库渲染 ---------- */
 function songItemHtml(s, opts = {}) {
   const off = state.offlineIds.has(s.id);
   const playing = state.queue[state.pos] && state.queue[state.pos].id === s.id;
+  const plat = s.platform && s.platform !== "通用" ? s.platform : "";
   return `<li class="song-item ${playing ? "playing" : ""}" data-id="${s.id}">
     <img class="song-cover" src="${coverUrl(s.cover)}" loading="lazy"
          onerror="this.src='static/default-cover.svg'">
     <div class="song-info">
       <div class="song-title">${esc(s.title)}</div>
-      <div class="song-artist">${off ? '<span class="badge-offline">已存手机</span>' : ""}${esc(s.artist)} · ${fmt(s.duration)}</div>
+      <div class="song-artist">${off ? '<span class="badge-offline">已存手机</span>' : ""}${esc(s.artist)}${plat ? " · " + esc(plat) : ""}${s.duration ? " · " + fmt(s.duration) : ""}</div>
     </div>
-    <span class="song-dur">${fmt(s.duration)}</span>
     <button class="song-more" data-more="${s.id}">⋯</button>
   </li>`;
 }
@@ -74,6 +92,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&am
 function renderLibrary() {
   const q = $("searchInput").value.trim().toLowerCase();
   let list = state.library;
+  if (state.onlyOffline) list = list.filter((s) => state.offlineIds.has(s.id));
   if (q) list = list.filter((s) => (s.title + s.artist).toLowerCase().includes(q));
   $("songList").innerHTML = list.map((s) => songItemHtml(s)).join("");
   $("libEmpty").style.display = state.library.length ? "none" : "block";
@@ -96,18 +115,17 @@ document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () 
   ["view-lib", "view-dl", "view-pl"].forEach((v) => $(v).hidden = v !== t.dataset.view);
 }));
 
-/* ---------- 下载 ---------- */
+/* ---------- 下载（支持多链接批量） ---------- */
 let jobTimer = null;
 function pollJobs() {
   fetch("/api/jobs").then((r) => r.json()).then((jobs) => {
-    const active = jobs.filter((j) => j.status !== "done" || Date.now() - 0 < 1e12);
-    const recent = jobs.slice(-8);
+    const recent = jobs.slice(-10).reverse();
     $("jobList").innerHTML = recent.map((j) => {
       let st = "", cls = "";
-      if (j.status === "error") { st = `失败：${esc(j.error || "")}`; cls = "err"; }
+      if (j.status === "error") { st = `✗ ${esc(j.error || "失败")}`; cls = "err"; }
       else if (j.status === "done") { st = "✓ 已加入曲库"; cls = "ok"; }
       else st = `${j.status === "queued" ? "排队中" : j.status === "processing" ? "转换音频中" : "下载中"} ${j.progress}%${j.speed ? " · " + fmtSpeed(j.speed) : ""}`;
-      return `<li class="job-item"><div class="job-title">${esc(j.title)}</div>
+      return `<li class="job-item"><div class="job-title">${j.platform ? `<span class="plat-tag">${esc(j.platform)}</span>` : ""}${esc(j.title)}</div>
         <div class="job-status ${cls}">${st}</div>
         ${j.status !== "done" && j.status !== "error" ? `<div class="progress"><i style="width:${j.progress}%"></i></div>` : ""}</li>`;
     }).join("");
@@ -120,16 +138,26 @@ function pollJobs() {
 function fmtSpeed(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + "MB/s" : Math.round(b / 1024) + "KB/s"; }
 
 $("downloadBtn").addEventListener("click", async () => {
-  const url = $("urlInput").value.trim();
-  if (!url) return toast("请先粘贴链接");
+  const raw = $("urlInput").value.trim();
+  if (!raw) return toast("请先粘贴链接");
+  const urls = raw.split(/[\n\r\s]+/).filter((u) => /^https?:\/\//.test(u)).slice(0, 10);
+  if (!urls.length) return toast("没有识别到有效链接");
+  const wxLinks = urls.filter((u) => /channels\.weixin\.qq\.com|weixin\.qq\.com\/sph|finder\.video\.qq\.com/.test(u));
+  if (wxLinks.length && !$("wxBadge").classList.contains("on")) {
+    const p = $("wxPanel");
+    if (p) p.open = true;
+    $("wxPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    toast("视频号需要先配置一次元宝 Cookie（下面 4 步）");
+  }
   $("downloadBtn").disabled = true;
   try {
     const r = await fetch("/api/download", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url, cookies: $("cookieChk").checked }),
+      body: JSON.stringify({ urls, cookies: $("cookieChk").checked }),
     });
     const data = await r.json();
-    if (data.error) toast(data.error); else { toast("已开始下载"); $("urlInput").value = ""; pollJobs(); }
+    if (data.error) toast(data.error);
+    else { toast(`已提交 ${urls.length} 个链接`); $("urlInput").value = ""; pollJobs(); }
   } catch { toast("无法连接服务器"); }
   $("downloadBtn").disabled = false;
 });
@@ -236,17 +264,26 @@ async function saveOffline(s) {
     const blob = await r.blob();
     let coverBlob = null;
     try { coverBlob = await (await fetch(coverUrl(s.cover))).blob(); } catch {}
-    await idb.put({ id: s.id, blob, coverBlob, title: s.title, artist: s.artist, savedAt: Date.now() });
+    await idb.put({
+      id: s.id, blob, coverBlob, title: s.title, artist: s.artist,
+      duration: s.duration || 0, platform: s.platform || "", savedAt: Date.now(),
+    });
     state.offlineIds.add(s.id);
     renderLibrary();
     toast(`「${s.title}」已存到手机 ✓`);
   } catch { toast("保存失败，请检查网络"); }
 }
 $("cacheAllBtn").addEventListener("click", async () => {
-  const todo = state.library.filter((s) => !state.offlineIds.has(s.id));
+  const todo = state.library.filter((s) => !state.offlineIds.has(s.id) && !s.offlineOnly);
   if (!todo.length) return toast("全部歌曲都已在手机上");
   toast(`开始缓存 ${todo.length} 首…`);
   for (const s of todo) await saveOffline(s);
+});
+$("offlineFilterBtn").addEventListener("click", () => {
+  state.onlyOffline = !state.onlyOffline;
+  $("offlineFilterBtn").textContent = state.onlyOffline ? "📴 只看离线 ✓" : "📴 只看离线";
+  $("offlineFilterBtn").style.color = state.onlyOffline ? "var(--ok)" : "";
+  renderLibrary();
 });
 
 /* ---------- 播放器核心 ---------- */
@@ -263,6 +300,14 @@ async function songSource(s) {
   return `${serverUrl}/api/audio/${s.id}`;
 }
 
+async function coverFor(s) {
+  if (state.offlineIds.has(s.id)) {
+    const rec = await idb.get(s.id);
+    if (rec && rec.coverBlob) return URL.createObjectURL(rec.coverBlob);
+  }
+  return coverUrl(s.cover);
+}
+
 async function loadAndPlay() {
   const s = curSong();
   if (!s) return;
@@ -272,9 +317,7 @@ async function loadAndPlay() {
   $("miniArtist").textContent = s.artist;
   $("fpTitle").textContent = s.title;
   $("fpArtist").textContent = s.artist;
-  const cover = state.offlineIds.has(s.id)
-    ? (await idb.get(s.id))?.coverBlob && URL.createObjectURL((await idb.get(s.id)).coverBlob) || coverUrl(s.cover)
-    : coverUrl(s.cover);
+  const cover = await coverFor(s);
   $("miniCover").src = cover; $("fpCover").src = cover;
   if ("mediaSession" in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -384,5 +427,68 @@ async function refreshAll() {
   setMode(state.mode);
   await openDB();
   await refreshAll();
+  await loadWxConfig();
   pollJobs();
 })();
+
+/* ---------- 视频号 Cookie 设置 ---------- */
+async function loadWxConfig() {
+  try {
+    const c = await (await fetch("/api/config")).json();
+    setWxBadge(c.channels_cookie_set, c.channels_cookie_preview);
+  } catch {}
+}
+function setWxBadge(on, preview) {
+  const b = $("wxBadge");
+  if (!b) return;
+  b.textContent = on ? "已配置 ✓" : "未配置";
+  b.classList.toggle("on", !!on);
+  if (on && preview) $("wxStatus").textContent = "当前：" + preview;
+}
+$("wxSaveBtn")?.addEventListener("click", async () => {
+  const v = ($("wxCookieInput").value || "").trim();
+  if (!v) return toast("请先粘贴 Cookie");
+  try {
+    const r = await fetch("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yuanbao_cookie: v }),
+    });
+    const d = await r.json();
+    if (d.channels_cookie_set) {
+      $("wxCookieInput").value = "";
+      $("wxStatus").textContent = "已保存，现在可以下载视频号了 ✓";
+      $("wxStatus").className = "wx-status ok";
+      setWxBadge(true, "");
+      toast("视频号解析已启用");
+    } else toast("保存失败");
+  } catch { toast("无法连接服务器"); }
+});
+$("wxClearBtn")?.addEventListener("click", async () => {
+  try {
+    await fetch("/api/config", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ yuanbao_cookie: "" }),
+    });
+    setWxBadge(false);
+    $("wxStatus").textContent = "已清除";
+    $("wxStatus").className = "wx-status";
+  } catch {}
+});
+
+/* ---------- 上传本地视频/音频（万能兜底） ---------- */
+$("uploadBtn")?.addEventListener("click", () => $("fileInput").click());
+$("fileInput")?.addEventListener("change", async (e) => {
+  const f = e.target.files && e.target.files[0];
+  if (!f) return;
+  const mb = (f.size / 1048576).toFixed(1);
+  toast(`正在上传 ${f.name}（${mb}MB）…`);
+  const fd = new FormData();
+  fd.append("file", f);
+  try {
+    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    const d = await r.json();
+    if (d.error) toast(d.error);
+    else { toast("上传成功，正在转音频…"); pollJobs(); }
+  } catch { toast("上传失败，检查网络或文件大小"); }
+  e.target.value = "";
+});

@@ -26,6 +26,22 @@
 - 离线：歌曲可保存到手机本地（IndexedDB），离线模式自动切换
 - 锁屏控制：手机锁屏/通知栏可控制播放（Media Session）
 
+## 微信视频号（需要一次配置）
+
+视频号的视频地址不对网页公开（只通过微信客户端内部的 JSBridge 传递），所以走的是官方 Web 预览链路，需要一份「腾讯元宝」登录态：
+
+1. 电脑浏览器打开 `yuanbao.tencent.com`，用微信扫码登录
+2. F12 → Network（网络）→ 随便点一条请求 → 在 Request Headers 里找到 `cookie:`，整段复制
+3. 打开云乐 → 「下载」页 → 展开「视频号解析设置」→ 粘贴保存
+4. 回到上面粘贴视频号分享链接（`https://weixin.qq.com/sph/xxxx` 这类），点开始下载
+
+说明与限制：
+
+- Cookie 保存在本机 `config.json`（已在 `.gitignore` 中，不会上传），过期后重新复制一次即可
+- 走 Web 预览链路，拿到的是被签名的中等码率规格（xWT113 / xWT158），转成 MP3 后听感无差别；如需母带级原始文件，需要微信 PC 客户端抓包解密，本应用不做
+- 链接有时效性，分享出来尽快下载；图文/直播类内容无法转音频
+- 如果实在不想配 Cookie：用手机把视频**录屏**或保存到相册，回到下载页点「📁 上传手机里的视频/录屏转音频」，一样能进曲库（歌名取文件名，封面取视频首帧）
+
 ## 注意事项
 
 - 仅限个人欣赏，请尊重版权；VIP / 加密 / DRM 内容无法下载
@@ -35,4 +51,4 @@
 
 ## 技术栈
 
-Python + Flask · yt-dlp（链接解析）· ffmpeg（转码/封面提取）· PWA（manifest + Service Worker）· IndexedDB（手机本地存储）
+Python + Flask · yt-dlp（链接解析）· 元宝 Web 接口 + 视频号 Preview 协议（视频号解析）· ffmpeg（转码/封面提取）· mutagen（ID3 标签/封面嵌入）· PWA（manifest + Service Worker）· IndexedDB（手机本地存储）
