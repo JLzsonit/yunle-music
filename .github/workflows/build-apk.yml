@@ -1,0 +1,95 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Prepare Capacitor project
+        run: |
+          npm init -y >/dev/null
+          npm i @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5 --no-audit --no-fund
+          mkdir -p www
+          cat > www/index.html <<'EOF'
+          <!DOCTYPE html><html><head><meta charset="utf-8"><title>云乐</title></head>
+          <body>请连接网络后重新打开应用</body></html>
+          EOF
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.jlzsonit.yunle",
+            "appName": "云乐",
+            "webDir": "www",
+            "server": {
+              "url": "https://yunle-music.app.workbuddy.host/?sharecode=YBAGATMDBV",
+              "hostname": "yunle-music.app.workbuddy.host",
+              "androidScheme": "https"
+            },
+            "android": { "allowMixedContent": false }
+          }
+          EOF
+          npx cap add android
+          npx cap sync android
+
+      - name: Replace launcher icon
+        run: |
+          python3 - <<'EOF'
+          import urllib.request, struct, zlib, os
+          url = "https://yunle-music.app.workbuddy.host/icons/icon-512.png?sharecode=YBAGATMDBV"
+          src = "/tmp/icon512.png"
+          urllib.request.urlretrieve(url, src)
+          # 用纯 Python 解码 PNG 并缩放（ runner 自带 python3 但可能无 PIL）
+          try:
+              from PIL import Image
+              have_pil = True
+          except ImportError:
+              have_pil = False
+          dens = {"mdpi":48, "hdpi":72, "xhdpi":96, "xxhdpi":144, "xxxhdpi":192}
+          base = "android/app/src/main/res"
+          if have_pil:
+              img = Image.open(src)
+              for d, s in dens.items():
+                  out = os.path.join(base, f"mipmap-{d}")
+                  os.makedirs(out, exist_ok=True)
+                  img.resize((s, s), Image.LANCZOS).save(os.path.join(out, "ic_launcher.png"))
+                  img.resize((s, s), Image.LANCZOS).save(os.path.join(out, "ic_launcher_round.png"))
+              print("icon replaced with PIL")
+          else:
+              import shutil
+              for d in dens:
+                  out = os.path.join(base, f"mipmap-{d}")
+                  os.makedirs(out, exist_ok=True)
+                  shutil.copy(src, os.path.join(out, "ic_launcher.png"))
+                  shutil.copy(src, os.path.join(out, "ic_launcher_round.png"))
+              print("icon copied without resize")
+          EOF
+
+      - name: Build debug APK
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug --no-daemon
+
+      - name: Rename artifact
+        run: |
+          mkdir -p output
+          cp android/app/build/outputs/apk/debug/app-debug.apk output/云乐-yunle-v1.0.0.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yunle-android-apk
+          path: output/云乐-yunle-v1.0.0.apk
