@@ -30,6 +30,12 @@ PL_FILE = BASE / "playlists.json"
 
 FFMPEG = shutil.which("ffmpeg")
 if not FFMPEG:
+    try:
+        import imageio_ffmpeg
+        FFMPEG = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception:
+        FFMPEG = None
+if not FFMPEG:
     cands = list(Path(os.environ.get("LOCALAPPDATA", "")).glob(
         "Microsoft/WinGet/Packages/*FFmpeg*/ffmpeg-*/bin/ffmpeg.exe"))
     FFMPEG = str(cands[0]) if cands else "ffmpeg"
@@ -255,12 +261,23 @@ def index():
     return send_from_directory("static", "index.html")
 
 
+@app.get("/<path:filename>")
+def static_root(filename):
+    """根路径静态文件：manifest.json / sw.js / icons/... 等（sw 必须在根作用域）"""
+    resp = send_from_directory("static", filename)
+    if filename == "sw.js":
+        resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
+
+
 if __name__ == "__main__":
     ip = get_local_ip()
+    port = int(os.environ.get("PORT", 8770))
     print("=" * 52)
     print("  云乐 · 链接变音乐")
-    print(f"  电脑访问:   http://127.0.0.1:8770")
-    print(f"  手机访问:   http://{ip}:8770")
-    print("  (手机与电脑需在同一 Wi-Fi 下)")
+    print(f"  本机访问:   http://127.0.0.1:{port}")
+    if port == 8770:
+        print(f"  手机访问:   http://{ip}:8770")
+        print("  (手机与电脑需在同一 Wi-Fi 下)")
     print("=" * 52)
-    app.run(host="0.0.0.0", port=8770, threaded=True)
+    app.run(host="0.0.0.0", port=port, threaded=True)
