@@ -1,5 +1,5 @@
 /* 云乐 Service Worker：缓存界面外壳，保证离线可打开应用 */
-const CACHE = "yunle-shell-v1";
+const CACHE = "yunle-shell-v2";
 const SHELL = ["/", "/index.html", "/style.css", "/app.js", "/manifest.json",
   "/default-cover.svg", "/icons/icon-192.png", "/icons/icon-512.png"];
 

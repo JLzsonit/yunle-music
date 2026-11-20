@@ -97,7 +97,7 @@ function renderLibrary() {
   $("songList").innerHTML = list.map((s) => songItemHtml(s)).join("");
   $("libEmpty").style.display = state.library.length ? "none" : "block";
   if (q && !list.length) $("libEmpty").innerHTML = `<div class="empty-icon">🔍</div><p>没有匹配「${esc(q)}」的歌曲</p>`;
-  else $("libEmpty").innerHTML = `<div class="empty-icon">🎵</div><p>曲库还是空的</p><p class="sub">去「下载」页粘贴一个链接试试</p>`;
+  else $("libEmpty").innerHTML = `<div class="empty-icon">🎵</div><p>曲库还是空的</p><p class="sub">粘贴一个链接，把它变成音乐</p><button id="goDlBtn" class="primary-btn cta">＋ 去下载音乐</button>`;
   $("offlineStat").textContent = state.library.length ? `${state.offlineIds.size}/${state.library.length} 已离线` : "";
 }
 
@@ -110,10 +110,13 @@ function renderPlaylists() {
 }
 
 /* ---------- Tab 切换 ---------- */
-document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => {
-  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x === t));
-  ["view-lib", "view-dl", "view-pl"].forEach((v) => $(v).hidden = v !== t.dataset.view);
-}));
+function switchView(id) {
+  document.querySelectorAll(".tab").forEach((x) => x.classList.toggle("active", x.dataset.view === id));
+  ["view-lib", "view-dl", "view-pl"].forEach((v) => $(v).hidden = v !== id);
+  window.scrollTo({ top: 0 });
+}
+document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => switchView(t.dataset.view)));
+$("libEmpty").addEventListener("click", (e) => { if (e.target.closest("#goDlBtn")) switchView("view-dl"); });
 
 /* ---------- 下载（支持多链接批量） ---------- */
 let jobTimer = null;
@@ -319,6 +322,9 @@ async function loadAndPlay() {
   $("fpArtist").textContent = s.artist;
   const cover = await coverFor(s);
   $("miniCover").src = cover; $("fpCover").src = cover;
+  // 有歌在播时显示迷你播放条
+  const mp = $("miniPlayer");
+  mp.hidden = false; mp.classList.add("show");
   if ("mediaSession" in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
       title: s.title, artist: s.artist, album: "云乐",
@@ -425,7 +431,12 @@ async function refreshAll() {
 }
 (async function init() {
   setMode(state.mode);
-  await openDB();
+  // 支持 ?view=dl / view=pl 直接落到指定标签页（先切视图，避免后面步骤失败挡住导航）
+  const vMap = { lib: "view-lib", dl: "view-dl", pl: "view-pl" };
+  const v = vMap[new URLSearchParams(location.search).get("view")]
+         || new URLSearchParams(location.search).get("view");
+  if (v && ["view-lib", "view-dl", "view-pl"].includes(v)) switchView(v);
+  try { await openDB(); } catch {}
   await refreshAll();
   await loadWxConfig();
   pollJobs();
