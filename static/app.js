@@ -52,8 +52,12 @@ function toast(msg) {
 const REMOTE_SERVER = "https://yunle-music.app.workbuddy.host";
 const IS_CAP = typeof window.Capacitor !== "undefined";
 const serverUrl = IS_CAP ? REMOTE_SERVER : location.origin;
-const api = (p) => serverUrl + p;
-const coverUrl = (c) => `${serverUrl}/api/cover/${encodeURIComponent(c)}`;
+const SHARECODE = "YBAGATMDBV"; // 托管网关访问凭证，APK 内置页面必须随请求携带
+const api = (p) => {
+  if (!IS_CAP) return serverUrl + p;
+  return serverUrl + p + (p.includes("?") ? "&" : "?") + "sharecode=" + SHARECODE;
+};
+const coverUrl = (c) => api(`/api/cover/${encodeURIComponent(c)}`);
 
 /* ---------- 数据加载（服务器优先，离线时回退到手机本地库） ---------- */
 async function loadLibrary() {
@@ -305,7 +309,7 @@ async function songSource(s) {
     const rec = await idb.get(s.id);
     if (rec) return URL.createObjectURL(rec.blob);
   }
-  return `${serverUrl}/api/audio/${s.id}`;
+  return api(`/api/audio/${s.id}`);
 }
 
 async function coverFor(s) {
