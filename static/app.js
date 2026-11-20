@@ -381,8 +381,10 @@ $("miniNextBtn").addEventListener("click", () => nextSong(false));
 $("fpNext").addEventListener("click", () => nextSong(false));
 $("fpPrev").addEventListener("click", prevSong);
 
-audio.addEventListener("play", () => { state.playing = true; $("miniPlayBtn").textContent = "⏸"; $("fpPlay").textContent = "⏸"; });
-audio.addEventListener("pause", () => { state.playing = false; $("miniPlayBtn").textContent = "▶"; $("fpPlay").textContent = "▶"; });
+const ICON_PLAY = '<svg viewBox="0 0 24 24" style="width:1em;height:1em;fill:currentColor"><path d="M6.5 4.7c0-1 1.1-1.6 1.9-1.1l12 6.6c.9.5.9 1.8 0 2.3l-12 6.9c-.8.5-1.9-.1-1.9-1.1V4.7Z"/></svg>';
+const ICON_PAUSE = '<svg viewBox="0 0 24 24" style="width:1em;height:1em;fill:currentColor"><rect x="5" y="3.5" width="5" height="17" rx="1.6"/><rect x="14" y="3.5" width="5" height="17" rx="1.6"/></svg>';
+audio.addEventListener("play", () => { state.playing = true; $("miniPlayBtn").innerHTML = ICON_PAUSE; $("fpPlay").innerHTML = ICON_PAUSE; });
+audio.addEventListener("pause", () => { state.playing = false; $("miniPlayBtn").innerHTML = ICON_PLAY; $("fpPlay").innerHTML = ICON_PLAY; });
 audio.addEventListener("ended", () => nextSong(true));
 audio.addEventListener("timeupdate", () => {
   if (!audio.duration) return;
@@ -503,3 +505,4 @@ $("fileInput")?.addEventListener("change", async (e) => {
   } catch { toast("上传失败，检查网络或文件大小"); }
   e.target.value = "";
 });
+
