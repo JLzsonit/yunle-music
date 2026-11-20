@@ -97,7 +97,7 @@ function renderLibrary() {
   $("songList").innerHTML = list.map((s) => songItemHtml(s)).join("");
   $("libEmpty").style.display = state.library.length ? "none" : "block";
   if (q && !list.length) $("libEmpty").innerHTML = `<div class="empty-icon">🔍</div><p>没有匹配「${esc(q)}」的歌曲</p>`;
-  else $("libEmpty").innerHTML = `<div class="empty-icon">🎵</div><p>曲库还是空的</p><p class="sub">粘贴一个链接，把它变成音乐</p><button id="goDlBtn" class="primary-btn cta">＋ 去下载音乐</button>`;
+  else $("libEmpty").innerHTML = `<div class="empty-icon">🎵</div><p>曲库还是空的</p><p class="sub">粘贴一个链接，把它变成音乐</p><button id="goDlBtn" class="btn primary cta">＋ 去下载音乐</button>`;
   $("offlineStat").textContent = state.library.length ? `${state.offlineIds.size}/${state.library.length} 已离线` : "";
 }
 

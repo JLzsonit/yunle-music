@@ -3,8 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
-<meta name="theme-color" content="#101018">
+<meta name="theme-color" content="#08070d">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="云乐">
 <link rel="manifest" href="manifest.json">
@@ -15,8 +16,16 @@
 </head>
 <body>
 
-<header class="topbar">
-  <div class="brand"><span class="logo">♫</span> 云乐</div>
+<!-- 液态玻璃的「背景墙」：彩色光斑透过玻璃才有折射感 -->
+<div class="wallpaper" aria-hidden="true">
+  <i class="blob b1"></i><i class="blob b2"></i><i class="blob b3"></i><i class="blob b4"></i>
+</div>
+
+<header class="topbar glass">
+  <div class="brand">
+    <span class="logo">♫</span>
+    <div class="brand-txt"><b>云乐</b><small>链接变音乐</small></div>
+  </div>
   <div class="net-badge" id="netBadge"><i></i><span>在线</span></div>
 </header>
 
@@ -24,76 +33,80 @@
 
   <!-- 曲库 -->
   <section class="view" id="view-lib">
-    <div class="search-row">
-      <input id="searchInput" type="search" placeholder="搜索歌曲或歌手…">
+    <h1 class="page-title">曲库</h1>
+    <div class="search-row glass">
+      <svg class="ic" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16.5 16.5 21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <input id="searchInput" type="search" placeholder="歌曲、歌手…">
     </div>
     <div class="lib-actions">
-      <button class="ghost-btn" id="cacheAllBtn">⬇ 全部存到手机</button>
-      <button class="ghost-btn" id="offlineFilterBtn">📴 只看离线</button>
+      <button class="pill glass" id="cacheAllBtn">⬇ 全部存到手机</button>
+      <button class="pill glass" id="offlineFilterBtn">📴 只看离线</button>
       <span id="offlineStat" class="offline-stat"></span>
     </div>
     <ul class="song-list" id="songList"></ul>
-    <div class="empty" id="libEmpty">
+    <div class="empty glass" id="libEmpty">
       <div class="empty-icon">🎵</div>
       <p>曲库还是空的</p>
       <p class="sub">粘贴一个链接，把它变成音乐</p>
-      <button id="goDlBtn" class="primary-btn cta">＋ 去下载音乐</button>
+      <button id="goDlBtn" class="btn primary cta">＋ 去下载音乐</button>
     </div>
   </section>
 
   <!-- 下载 -->
   <section class="view" id="view-dl" hidden>
-    <div class="dl-card">
+    <h1 class="page-title">下载</h1>
+    <div class="dl-card glass">
       <h2>粘贴链接，变成音乐</h2>
-      <p class="hint">抖音 · 快手 · B站 · 小红书 · 微博 · 视频号 · YouTube…<br>只要是能分享出链接的，都试试；支持一次粘贴多条（每行一条）</p>
+      <p class="hint">抖音 · 快手 · B站 · 小红书 · 微博 · 视频号 · YouTube…<br>能分享出链接的都试试，支持一次粘贴多条</p>
       <div class="url-row">
         <textarea id="urlInput" rows="3" placeholder="粘贴分享链接，可多行…" autocomplete="off"></textarea>
       </div>
       <div class="dl-btns">
-        <button id="pasteBtn" class="ghost-btn">粘贴</button>
-        <button id="downloadBtn" class="primary-btn">开始下载</button>
+        <button id="pasteBtn" class="btn glass-btn">粘贴</button>
+        <button id="downloadBtn" class="btn primary">开始下载</button>
       </div>
-      <label class="cookie-row"><input type="checkbox" id="cookieChk"> 使用电脑浏览器登录状态（会员/完整版/强反爬平台需要）</label>
+      <label class="cookie-row"><input type="checkbox" id="cookieChk"><i></i>使用电脑浏览器登录状态（会员 / 强反爬平台需要）</label>
 
-      <!-- 视频号专用：解析需要一次元宝登录态 -->
+      <!-- 视频号专用 -->
       <details class="wx-panel" id="wxPanel">
         <summary>视频号解析设置 <span class="wx-badge" id="wxBadge">未配置</span></summary>
         <div class="wx-body">
-          <p class="wx-tip">视频号的视频地址不对网页公开，必须借腾讯元宝的登录态换取。只需配置一次：</p>
+          <p class="wx-tip">视频号的视频地址不对网页公开，需要借腾讯元宝的登录态换取，只需配置一次：</p>
           <ol class="wx-steps">
-            <li>电脑浏览器打开 <b>yuanbao.tencent.com</b>，用微信扫码登录</li>
-            <li>按 F12 → 切到 <b>Network(网络)</b> → 随便点一条请求</li>
-            <li>在 <b>Request Headers</b> 里找到 <b>cookie:</b>，整段复制</li>
-            <li>粘贴到下面保存，然后回上面贴视频号分享链接下载</li>
+            <li>电脑浏览器打开 <b>yuanbao.tencent.com</b>，微信扫码登录</li>
+            <li>F12 → <b>Network</b> → 随便点一条请求</li>
+            <li>在 <b>Request Headers</b> 找到 <b>cookie:</b> 整段复制</li>
+            <li>粘贴到下面保存，回上面贴视频号链接即可下载</li>
           </ol>
           <textarea id="wxCookieInput" rows="3" placeholder="粘贴 cookie: 后面的整段内容…" autocomplete="off"></textarea>
           <div class="wx-actions">
-            <button id="wxSaveBtn" class="ghost-btn">保存 Cookie</button>
-            <button id="wxClearBtn" class="ghost-btn">清除</button>
+            <button id="wxSaveBtn" class="btn glass-btn sm">保存 Cookie</button>
+            <button id="wxClearBtn" class="btn glass-btn sm">清除</button>
             <span class="wx-status" id="wxStatus"></span>
           </div>
         </div>
       </details>
 
-      <!-- 万能兜底：本地视频/音频直接转 -->
+      <!-- 万能兜底 -->
       <div class="upload-row">
         <input type="file" id="fileInput" accept="video/*,audio/*" hidden>
-        <button id="uploadBtn" class="ghost-btn">📁 上传手机里的视频/录屏转音频</button>
+        <button id="uploadBtn" class="btn glass-btn wide">📁 上传手机里的视频 / 录屏转音频</button>
       </div>
 
-      <div class="support-note">⚠ 仅限个人欣赏，请尊重版权；VIP 加密内容无法下载。视频号需先按上面配置一次 Cookie。</div>
+      <div class="support-note">仅限个人欣赏，请尊重版权；VIP 加密内容无法下载。视频号需先配置一次 Cookie。</div>
     </div>
     <ul class="job-list" id="jobList"></ul>
   </section>
 
   <!-- 歌单 -->
   <section class="view" id="view-pl" hidden>
-    <div class="pl-create">
+    <h1 class="page-title">歌单</h1>
+    <div class="pl-create glass">
       <input id="plNameInput" type="text" placeholder="新歌单名称…" maxlength="20">
-      <button id="plCreateBtn" class="ghost-btn">创建</button>
+      <button id="plCreateBtn" class="btn primary sm">创建</button>
     </div>
     <ul class="pl-list" id="plList"></ul>
-    <div class="empty" id="plEmpty">
+    <div class="empty glass" id="plEmpty">
       <div class="empty-icon">📂</div>
       <p>还没有歌单</p>
       <p class="sub">创建歌单，把喜欢的歌分类收藏</p>
@@ -104,26 +117,28 @@
 
 <!-- 歌单详情弹层 -->
 <div class="sheet-mask" id="plSheetMask" hidden>
-  <div class="sheet" id="plSheet">
+  <div class="sheet glass-strong" id="plSheet">
+    <div class="grabber"></div>
     <div class="sheet-head">
       <strong id="plSheetTitle">歌单</strong>
-      <button class="ghost-btn" id="plSheetClose">关闭</button>
+      <button class="btn glass-btn sm" id="plSheetClose">完成</button>
     </div>
     <div class="pl-add-row">
       <select id="plAddSelect"></select>
-      <button id="plAddBtn" class="ghost-btn">添加</button>
+      <button id="plAddBtn" class="btn glass-btn sm">添加</button>
     </div>
     <ul class="song-list" id="plSongList"></ul>
-    <button id="plPlayBtn" class="primary-btn">▶ 播放整个歌单</button>
-    <button id="plDeleteBtn" class="danger-btn">删除这个歌单</button>
+    <button id="plPlayBtn" class="btn primary">▶ 播放整个歌单</button>
+    <button id="plDeleteBtn" class="btn danger">删除这个歌单</button>
   </div>
 </div>
 
 <!-- 歌曲操作菜单 -->
 <div class="sheet-mask" id="songSheetMask" hidden>
-  <div class="sheet">
-    <div class="sheet-head"><strong id="songSheetTitle">歌曲</strong><button class="ghost-btn" id="songSheetClose">关闭</button></div>
-    <div class="action-list">
+  <div class="sheet glass-strong">
+    <div class="grabber"></div>
+    <div class="sheet-head"><strong id="songSheetTitle">歌曲</strong><button class="btn glass-btn sm" id="songSheetClose">完成</button></div>
+    <div class="action-list glass">
       <button id="actSave">⬇ 保存到手机（离线可听）</button>
       <button id="actAddPl">📂 添加到歌单</button>
       <button id="actPlayNext">⏭ 下一首播放</button>
@@ -133,7 +148,7 @@
 </div>
 
 <!-- 迷你播放条 -->
-<div class="mini-player" id="miniPlayer" hidden>
+<div class="mini-player glass" id="miniPlayer" hidden>
   <img id="miniCover" src="static/default-cover.svg" alt="">
   <div class="mini-info">
     <div class="mini-title" id="miniTitle">—</div>
@@ -146,11 +161,12 @@
 
 <!-- 全屏播放器 -->
 <div class="full-player" id="fullPlayer" hidden>
+  <div class="fp-glow" aria-hidden="true"></div>
   <div class="fp-top">
-    <button class="ghost-btn" id="fpClose">⌄ 收起</button>
-    <span class="fp-mode" id="fpModeLabel">顺序播放</span>
+    <button class="btn glass-btn" id="fpClose">⌄ 收起</button>
+    <span class="fp-mode glass" id="fpModeLabel">顺序播放</span>
   </div>
-  <img class="fp-cover" id="fpCover" src="static/default-cover.svg" alt="">
+  <div class="fp-cover-wrap"><img class="fp-cover" id="fpCover" src="static/default-cover.svg" alt=""></div>
   <div class="fp-title" id="fpTitle">—</div>
   <div class="fp-artist" id="fpArtist">—</div>
   <div class="fp-seek">
@@ -159,23 +175,23 @@
     <span id="fpDur">0:00</span>
   </div>
   <div class="fp-ctl-row">
-    <button class="ctl big" id="fpPrev">⏮</button>
+    <button class="ctl big glass" id="fpPrev">⏮</button>
     <button class="ctl huge" id="fpPlay">▶</button>
-    <button class="ctl big" id="fpNext">⏭</button>
+    <button class="ctl big glass" id="fpNext">⏭</button>
   </div>
   <div class="fp-sub-row">
-    <button class="ctl" id="fpModeBtn">🔁 模式</button>
+    <button class="btn glass-btn sm" id="fpModeBtn">🔁 模式</button>
     <div class="vol">🔈 <input type="range" id="fpVol" min="0" max="100" value="100"></div>
   </div>
 </div>
 
-<nav class="tabbar">
+<nav class="tabbar glass">
   <button class="tab active" data-view="view-lib"><span>🎵</span>曲库</button>
   <button class="tab" data-view="view-dl"><span>⬇</span>下载</button>
   <button class="tab" data-view="view-pl"><span>📂</span>歌单</button>
 </nav>
 
-<div class="toast" id="toast" hidden></div>
+<div class="toast glass" id="toast" hidden></div>
 
 <script src="app.js"></script>
 </body>
