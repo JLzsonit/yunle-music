@@ -20,8 +20,7 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub ubuntu 运行器已预装 Android SDK（ANDROID_HOME），无需额外安装
 
       - name: Prepare Capacitor project
         run: |
