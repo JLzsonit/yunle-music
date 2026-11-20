@@ -1,0 +1,8 @@
+# 用户私有数据不入库
+music_library/
+static/covers/
+library.json
+playlists.json
+__pycache__/
+*.pyc
+.DS_Store

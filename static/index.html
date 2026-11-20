@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#101018">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="云乐">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="style.css">
+<title>云乐 · 链接变音乐</title>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">♫</span> 云乐</div>
+  <div class="net-badge" id="netBadge"><i></i><span>在线</span></div>
+</header>
+
+<main id="views">
+
+  <!-- 曲库 -->
+  <section class="view" id="view-lib">
+    <div class="search-row">
+      <input id="searchInput" type="search" placeholder="搜索歌曲或歌手…">
+    </div>
+    <div class="lib-actions">
+      <button class="ghost-btn" id="cacheAllBtn">⬇ 全部存到手机</button>
+      <span id="offlineStat" class="offline-stat"></span>
+    </div>
+    <ul class="song-list" id="songList"></ul>
+    <div class="empty" id="libEmpty">
+      <div class="empty-icon">🎵</div>
+      <p>曲库还是空的</p>
+      <p class="sub">去「下载」页粘贴一个链接试试</p>
+    </div>
+  </section>
+
+  <!-- 下载 -->
+  <section class="view" id="view-dl" hidden>
+    <div class="dl-card">
+      <h2>粘贴链接，变成音乐</h2>
+      <p class="hint">支持抖音 · B站 · 视频号 · 各类音乐网站的视频/音频链接</p>
+      <div class="url-row">
+        <input id="urlInput" type="url" placeholder="粘贴视频或音乐链接…" autocomplete="off">
+        <button id="pasteBtn" class="ghost-btn">粘贴</button>
+      </div>
+      <label class="cookie-row"><input type="checkbox" id="cookieChk"> 优先使用电脑浏览器登录状态（部分网站会员/完整歌曲需要）</label>
+      <button id="downloadBtn" class="primary-btn">开始下载</button>
+      <div class="support-note">⚠ 仅限个人欣赏，请尊重版权；VIP/加密内容可能无法下载。</div>
+    </div>
+    <ul class="job-list" id="jobList"></ul>
+  </section>
+
+  <!-- 歌单 -->
+  <section class="view" id="view-pl" hidden>
+    <div class="pl-create">
+      <input id="plNameInput" type="text" placeholder="新歌单名称…" maxlength="20">
+      <button id="plCreateBtn" class="ghost-btn">创建</button>
+    </div>
+    <ul class="pl-list" id="plList"></ul>
+    <div class="empty" id="plEmpty">
+      <div class="empty-icon">📂</div>
+      <p>还没有歌单</p>
+      <p class="sub">创建歌单，把喜欢的歌分类收藏</p>
+    </div>
+  </section>
+
+</main>
+
+<!-- 歌单详情弹层 -->
+<div class="sheet-mask" id="plSheetMask" hidden>
+  <div class="sheet" id="plSheet">
+    <div class="sheet-head">
+      <strong id="plSheetTitle">歌单</strong>
+      <button class="ghost-btn" id="plSheetClose">关闭</button>
+    </div>
+    <div class="pl-add-row">
+      <select id="plAddSelect"></select>
+      <button id="plAddBtn" class="ghost-btn">添加</button>
+    </div>
+    <ul class="song-list" id="plSongList"></ul>
+    <button id="plPlayBtn" class="primary-btn">▶ 播放整个歌单</button>
+    <button id="plDeleteBtn" class="danger-btn">删除这个歌单</button>
+  </div>
+</div>
+
+<!-- 歌曲操作菜单 -->
+<div class="sheet-mask" id="songSheetMask" hidden>
+  <div class="sheet">
+    <div class="sheet-head"><strong id="songSheetTitle">歌曲</strong><button class="ghost-btn" id="songSheetClose">关闭</button></div>
+    <div class="action-list">
+      <button id="actSave">⬇ 保存到手机（离线可听）</button>
+      <button id="actAddPl">📂 添加到歌单</button>
+      <button id="actPlayNext">⏭ 下一首播放</button>
+      <button id="actDelete" class="danger-text">🗑 从曲库删除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 迷你播放条 -->
+<div class="mini-player" id="miniPlayer" hidden>
+  <img id="miniCover" src="static/default-cover.svg" alt="">
+  <div class="mini-info">
+    <div class="mini-title" id="miniTitle">—</div>
+    <div class="mini-artist" id="miniArtist">—</div>
+  </div>
+  <button class="ctl" id="miniModeBtn" title="播放模式">🔁</button>
+  <button class="ctl big" id="miniPlayBtn">▶</button>
+  <button class="ctl" id="miniNextBtn">⏭</button>
+</div>
+
+<!-- 全屏播放器 -->
+<div class="full-player" id="fullPlayer" hidden>
+  <div class="fp-top">
+    <button class="ghost-btn" id="fpClose">▾</button>
+    <span class="fp-mode" id="fpModeLabel">顺序播放</span>
+  </div>
+  <img class="fp-cover" id="fpCover" src="static/default-cover.svg" alt="">
+  <div class="fp-title" id="fpTitle">—</div>
+  <div class="fp-artist" id="fpArtist">—</div>
+  <div class="fp-seek">
+    <span id="fpCur">0:00</span>
+    <input type="range" id="fpSeek" min="0" max="1000" value="0">
+    <span id="fpDur">0:00</span>
+  </div>
+  <div class="fp-ctl-row">
+    <button class="ctl big" id="fpPrev">⏮</button>
+    <button class="ctl huge" id="fpPlay">▶</button>
+    <button class="ctl big" id="fpNext">⏭</button>
+  </div>
+  <div class="fp-sub-row">
+    <button class="ctl" id="fpModeBtn">🔁 模式</button>
+    <div class="vol">🔈 <input type="range" id="fpVol" min="0" max="100" value="100"></div>
+  </div>
+</div>
+
+<nav class="tabbar">
+  <button class="tab active" data-view="view-lib"><span>🎵</span>曲库</button>
+  <button class="tab" data-view="view-dl"><span>⬇</span>下载</button>
+  <button class="tab" data-view="view-pl"><span>📂</span>歌单</button>
+</nav>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="app.js"></script>
+</body>
+</html>
