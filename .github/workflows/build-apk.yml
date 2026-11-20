@@ -26,21 +26,17 @@ jobs:
         run: |
           npm init -y >/dev/null
           npm i @capacitor/core@5 @capacitor/cli@5 @capacitor/android@5 --no-audit --no-fund
-          mkdir -p www
-          cat > www/index.html <<'EOF'
-          <!DOCTYPE html><html><head><meta charset="utf-8"><title>云乐</title></head>
-          <body>请连接网络后重新打开应用</body></html>
-          EOF
+          # 完整界面内置进 APK：本地加载 UI，联网时调用云端引擎下载
+          rm -rf www && mkdir -p www
+          cp -r static/* www/
+          rm -f www/sw.js
+          # 壳内本地路径兜底：/static/default-cover.svg 也要可访问
+          mkdir -p www/static && cp static/default-cover.svg www/static/
           cat > capacitor.config.json <<'EOF'
           {
             "appId": "com.jlzsonit.yunle",
             "appName": "云乐",
             "webDir": "www",
-            "server": {
-              "url": "https://yunle-music.app.workbuddy.host/?sharecode=YBAGATMDBV",
-              "hostname": "yunle-music.app.workbuddy.host",
-              "androidScheme": "https"
-            },
             "android": { "allowMixedContent": false }
           }
           EOF
@@ -86,9 +82,9 @@ jobs:
       - name: Rename artifact
         run: |
           mkdir -p output
-          cp android/app/build/outputs/apk/debug/app-debug.apk output/云乐-yunle-v1.0.0.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk output/云乐-yunle-v1.1.0.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: yunle-android-apk
-          path: output/云乐-yunle-v1.0.0.apk
+          path: output/云乐-yunle-v1.1.0.apk

@@ -48,13 +48,17 @@ function toast(msg) {
   const t = $("toast"); t.textContent = msg; t.hidden = false;
   clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 2200);
 }
-const serverUrl = location.origin;
+/* 云端引擎地址：APK 壳内（本地界面）指向云端，网页版用同源 */
+const REMOTE_SERVER = "https://yunle-music.app.workbuddy.host";
+const IS_CAP = typeof window.Capacitor !== "undefined";
+const serverUrl = IS_CAP ? REMOTE_SERVER : location.origin;
+const api = (p) => serverUrl + p;
 const coverUrl = (c) => `${serverUrl}/api/cover/${encodeURIComponent(c)}`;
 
 /* ---------- 数据加载（服务器优先，离线时回退到手机本地库） ---------- */
 async function loadLibrary() {
   try {
-    state.library = await (await fetch("/api/library")).json();
+    state.library = await (await fetch(api("/api/library"))).json();
     state.serverOk = true;
   } catch (e) {
     // 服务器不可达：用手机本地已保存的歌曲构建曲库
@@ -68,7 +72,7 @@ async function loadLibrary() {
   }
 }
 async function loadPlaylists() {
-  try { state.playlists = await (await fetch("/api/playlists")).json(); }
+  try { state.playlists = await (await fetch(api("/api/playlists"))).json(); }
   catch { state.playlists = state.playlists || []; }
 }
 
@@ -121,7 +125,8 @@ $("libEmpty").addEventListener("click", (e) => { if (e.target.closest("#goDlBtn"
 /* ---------- 下载（支持多链接批量） ---------- */
 let jobTimer = null;
 function pollJobs() {
-  fetch("/api/jobs").then((r) => r.json()).then((jobs) => {
+  fetch(api("/api/jobs")).then((r) => r.json()).then((jobs) => {
+    $("jobGroup").hidden = !jobs.length;
     const recent = jobs.slice(-10).reverse();
     $("jobList").innerHTML = recent.map((j) => {
       let st = "", cls = "";
@@ -154,7 +159,7 @@ $("downloadBtn").addEventListener("click", async () => {
   }
   $("downloadBtn").disabled = true;
   try {
-    const r = await fetch("/api/download", {
+    const r = await fetch(api("/api/download"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ urls, cookies: $("cookieChk").checked }),
     });
@@ -191,7 +196,7 @@ function openSongSheet(s) {
 $("actSave").addEventListener("click", async () => { await saveOffline(sheetSong); $("songSheetMask").hidden = true; });
 $("actDelete").addEventListener("click", async () => {
   if (!confirm(`确定从曲库删除「${sheetSong.title}」？（手机已存的离线副本会保留）`)) return;
-  await fetch(`/api/song/${sheetSong.id}`, { method: "DELETE" });
+  await fetch(api(`/api/song/${sheetSong.id}`), { method: "DELETE" });
   state.library = state.library.filter((s) => s.id !== sheetSong.id);
   renderLibrary(); $("songSheetMask").hidden = true; toast("已删除");
 });
@@ -211,7 +216,7 @@ $("actAddPl").addEventListener("click", () => {
     const pid = $("plAddSelect").value; if (!pid) return toast("先创建一个歌单");
     const pl = state.playlists.find((p) => p.id === pid);
     if (!pl.songIds.includes(sheetSong.id)) pl.songIds.push(sheetSong.id);
-    await fetch(`/api/playlists/${pid}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ songIds: pl.songIds }) });
+    await fetch(api(`/api/playlists/${pid}`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ songIds: pl.songIds }) });
     toast(`已添加到「${pl.name}」`); $("plSheetMask").hidden = true;
   };
 });
@@ -219,7 +224,7 @@ $("actAddPl").addEventListener("click", () => {
 /* ---------- 歌单 ---------- */
 $("plCreateBtn").addEventListener("click", async () => {
   const name = $("plNameInput").value.trim(); if (!name) return toast("请输入歌单名");
-  await fetch("/api/playlists", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
+  await fetch(api("/api/playlists"), { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) });
   $("plNameInput").value = ""; await loadPlaylists(); renderPlaylists(); toast("已创建");
 });
 $("plList").addEventListener("click", (e) => {
@@ -236,7 +241,7 @@ function openPlSheet(pl) {
   $("plAddBtn").onclick = async () => {
     const sid = $("plAddSelect").value; if (!sid) return;
     if (!pl.songIds.includes(sid)) pl.songIds.push(sid);
-    await fetch(`/api/playlists/${pl.id}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ songIds: pl.songIds }) });
+    await fetch(api(`/api/playlists/${pl.id}`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ songIds: pl.songIds }) });
     openPlSheet(pl); toast("已添加");
   };
 }
@@ -252,7 +257,7 @@ $("plPlayBtn").addEventListener("click", () => {
 });
 $("plDeleteBtn").addEventListener("click", async () => {
   if (!confirm(`删除歌单「${state.currentPl.name}」？（不影响歌曲本身）`)) return;
-  await fetch(`/api/playlists/${state.currentPl.id}`, { method: "DELETE" });
+  await fetch(api(`/api/playlists/${state.currentPl.id}`), { method: "DELETE" });
   await loadPlaylists(); renderPlaylists(); $("plSheetMask").hidden = true;
 });
 $("plSheetClose").addEventListener("click", () => { $("plSheetMask").hidden = true; renderPlaylists(); });
@@ -262,7 +267,7 @@ $("plSheetMask").addEventListener("click", (e) => { if (e.target === e.currentTa
 async function saveOffline(s) {
   try {
     toast("正在保存到手机…");
-    const r = await fetch(`/api/audio/${s.id}`);
+    const r = await fetch(api(`/api/audio/${s.id}`));
     if (!r.ok) throw new Error();
     const blob = await r.blob();
     let coverBlob = null;
@@ -284,8 +289,8 @@ $("cacheAllBtn").addEventListener("click", async () => {
 });
 $("offlineFilterBtn").addEventListener("click", () => {
   state.onlyOffline = !state.onlyOffline;
-  $("offlineFilterBtn").textContent = state.onlyOffline ? "📴 只看离线 ✓" : "📴 只看离线";
-  $("offlineFilterBtn").style.color = state.onlyOffline ? "var(--ok)" : "";
+  $("offlineFilterBtn").textContent = state.onlyOffline ? "只看离线 ✓" : "只看离线";
+  $("offlineFilterBtn").classList.toggle("on", state.onlyOffline);
   renderLibrary();
 });
 
@@ -447,7 +452,7 @@ async function refreshAll() {
 /* ---------- 视频号 Cookie 设置 ---------- */
 async function loadWxConfig() {
   try {
-    const c = await (await fetch("/api/config")).json();
+    const c = await (await fetch(api("/api/config"))).json();
     setWxBadge(c.channels_cookie_set, c.channels_cookie_preview);
   } catch {}
 }
@@ -462,7 +467,7 @@ $("wxSaveBtn")?.addEventListener("click", async () => {
   const v = ($("wxCookieInput").value || "").trim();
   if (!v) return toast("请先粘贴 Cookie");
   try {
-    const r = await fetch("/api/config", {
+    const r = await fetch(api("/api/config"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ yuanbao_cookie: v }),
     });
@@ -478,7 +483,7 @@ $("wxSaveBtn")?.addEventListener("click", async () => {
 });
 $("wxClearBtn")?.addEventListener("click", async () => {
   try {
-    await fetch("/api/config", {
+    await fetch(api("/api/config"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ yuanbao_cookie: "" }),
     });
@@ -498,7 +503,7 @@ $("fileInput")?.addEventListener("change", async (e) => {
   const fd = new FormData();
   fd.append("file", f);
   try {
-    const r = await fetch("/api/upload", { method: "POST", body: fd });
+    const r = await fetch(api("/api/upload"), { method: "POST", body: fd });
     const d = await r.json();
     if (d.error) toast(d.error);
     else { toast("上传成功，正在转音频…"); pollJobs(); }
