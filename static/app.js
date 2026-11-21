@@ -181,7 +181,11 @@ function pollJobs() {
           if (dlSeenError !== e.id) {
             dlSeenError = e.id;
             toast("下载失败，请看上方红字说明");
-            if (/cookie|Cookie|元宝/i.test(e.error || "")) {
+            const msg = e.error || "";
+            if (/抖音/.test(msg)) {
+              const p = $("dyPanel"); if (p) p.open = true;
+              p?.scrollIntoView({ behavior: "smooth", block: "center" });
+            } else if (/cookie|Cookie|元宝|视频号/.test(msg)) {
               const p = $("wxPanel"); if (p) p.open = true;
               p?.scrollIntoView({ behavior: "smooth", block: "center" });
             }
@@ -203,7 +207,10 @@ function fmtSpeed(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + "MB/s" : 
 $("downloadBtn").addEventListener("click", async () => {
   const raw = $("urlInput").value.trim();
   if (!raw) return toast("请先粘贴链接");
-  const urls = raw.split(/[\n\r\s]+/).filter((u) => /^https?:\/\//.test(u)).slice(0, 10);
+  // 兼容抖音等「口令+链接」混合文本：从整段文字中提取所有链接并去掉尾部标点
+  const urls = (raw.match(/https?:\/\/[^\s，。！？、；：""''<>（）()]+/g) || [])
+    .map((u) => u.replace(/[),.;!?]+$/, ""))
+    .slice(0, 10);
   if (!urls.length) return toast("没有识别到有效链接");
   const wxLinks = urls.filter((u) => /channels\.weixin\.qq\.com|weixin\.qq\.com\/sph|finder\.video\.qq\.com/.test(u));
   if (wxLinks.length && !$("wxBadge").classList.contains("on")) {
@@ -212,6 +219,15 @@ $("downloadBtn").addEventListener("click", async () => {
     $("wxPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
     setDlStatus("视频号链接需要先配置「元宝 Cookie」：按下面 4 步复制 Cookie 保存后，再点开始下载。", "err");
     toast("视频号需要先配置一次元宝 Cookie");
+    return;
+  }
+  const dyLinks = urls.filter((u) => /douyin\.com|iesdouyin\.com/.test(u));
+  if (dyLinks.length && !$("dyBadge").classList.contains("on")) {
+    const p = $("dyPanel");
+    if (p) p.open = true;
+    $("dyPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setDlStatus("抖音链接需要先配置「抖音 Cookie」：按下面 4 步复制 Cookie 保存后，再点开始下载。", "err");
+    toast("抖音需要先配置一次 Cookie");
     return;
   }
   $("downloadBtn").disabled = true;
@@ -536,6 +552,7 @@ async function loadWxConfig() {
   try {
     const c = await (await fetch(api("/api/config"))).json();
     setWxBadge(c.channels_cookie_set, c.channels_cookie_preview);
+    setDyBadge(c.douyin_cookie_set, c.douyin_cookie_preview);
   } catch {}
 }
 function setWxBadge(on, preview) {
@@ -572,6 +589,44 @@ $("wxClearBtn")?.addEventListener("click", async () => {
     setWxBadge(false);
     $("wxStatus").textContent = "已清除";
     $("wxStatus").className = "wx-status";
+  } catch {}
+});
+
+/* ---------- 抖音 Cookie 设置 ---------- */
+function setDyBadge(on, preview) {
+  const b = $("dyBadge");
+  if (!b) return;
+  b.textContent = on ? "已配置 ✓" : "未配置";
+  b.classList.toggle("on", !!on);
+  if (on && preview) $("dyStatus").textContent = "当前：" + preview;
+}
+$("dySaveBtn")?.addEventListener("click", async () => {
+  const v = ($("dyCookieInput").value || "").trim();
+  if (!v) return toast("请先粘贴 Cookie");
+  try {
+    const r = await fetch(api("/api/config"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ douyin_cookie: v }),
+    });
+    const d = await r.json();
+    if (d.douyin_cookie_set) {
+      $("dyCookieInput").value = "";
+      $("dyStatus").textContent = "已保存，现在可以下载抖音了 ✓";
+      $("dyStatus").className = "wx-status ok";
+      setDyBadge(true, "");
+      toast("抖音解析已启用");
+    } else toast("保存失败");
+  } catch { toast("无法连接服务器"); }
+});
+$("dyClearBtn")?.addEventListener("click", async () => {
+  try {
+    await fetch(api("/api/config"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ douyin_cookie: "" }),
+    });
+    setDyBadge(false);
+    $("dyStatus").textContent = "已清除";
+    $("dyStatus").className = "wx-status";
   } catch {}
 });
 

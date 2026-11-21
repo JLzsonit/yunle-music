@@ -206,7 +206,7 @@ def save_remote_cover(cover_url, job_id):
     return None
 
 
-def ydl_opts(job_id, use_cookies, hook):
+def ydl_opts(job_id, use_cookies, hook, cookie_file=None):
     opts = {
         "format": "bestaudio/best",
         "outtmpl": str(MUSIC_DIR / f"{job_id}.%(ext)s"),
@@ -223,10 +223,56 @@ def ydl_opts(job_id, use_cookies, hook):
         "retries": 2,
         "socket_timeout": 25,
         "geo_bypass": True,
+        "http_headers": {"User-Agent": MOBILE_UA},
     }
-    if use_cookies:
+    if cookie_file:
+        opts["cookiefile"] = str(cookie_file)
+    elif use_cookies:
         opts["cookiesfrombrowser"] = ("chrome",)
     return opts
+
+
+# ---------------- Cookie 工具（抖音等需要登录态的站点） ----------------
+
+def cookie_file_for(raw_cookie, domain, tag):
+    """把浏览器复制的 "k=v; k2=v2" 转成 yt-dlp 可用的 Netscape cookie 文件"""
+    raw = (raw_cookie or "").strip()
+    if not raw:
+        return None
+    path = BASE / f".{tag}_cookies.txt"
+    exp = int(time.time()) + 86400 * 30
+    lines = ["# Netscape HTTP Cookie File"]
+    for part in raw.split(";"):
+        part = part.strip()
+        if not part or "=" not in part:
+            continue
+        k, v = part.split("=", 1)
+        k, v = k.strip(), v.strip()
+        if not k:
+            continue
+        lines.append(f"{domain}\tTRUE\t/\tFALSE\t{exp}\t{k}\t{v}")
+    if len(lines) == 1:
+        return None
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def resolve_douyin(url):
+    """短链跳转解析：v.douyin.com -> 真实作品页；返回 (规范链接, 类型)"""
+    try:
+        r = http_get(url, timeout=25)
+        final = r.url or url
+    except Exception:
+        final = url
+    if "/note/" in final:
+        return final, "note"
+    m = re.search(r"/(?:video|share/video)/(\d+)", final)
+    if m:
+        return f"https://www.douyin.com/video/{m.group(1)}", "video"
+    m = re.search(r"modal_id=(\d+)", final)
+    if m:
+        return f"https://www.douyin.com/video/{m.group(1)}", "video"
+    return final, "unknown"
 
 
 def download_media(url, dest, job_id, referer=None, ua=MOBILE_UA):
@@ -361,6 +407,26 @@ def do_download(job_id, url, use_cookies):
     if plat == "微信视频号":
         download_channels(job_id, url)
         return
+    cookie_file = None
+    if plat == "抖音":
+        jobs[job_id].update(status="downloading", progress=4, title="正在解析抖音链接…", platform=plat)
+        real, kind = resolve_douyin(url)
+        if kind == "note":
+            jobs[job_id].update(status="error", platform=plat,
+                                error="这是抖音「图文」作品（只有图片），没有音轨可提取。请换一条视频作品链接。")
+            return
+        if kind == "video":
+            url = real
+        dy_ck = (config.get("douyin_cookie") or "").strip()
+        if not dy_ck:
+            jobs[job_id].update(status="error", platform=plat,
+                                error="抖音解析需要先配置一次「抖音 Cookie」：\n"
+                                      "1. 电脑浏览器打开 douyin.com（登录或不登录都行）\n"
+                                      "2. F12 → Network → 刷新页面，点任意一条请求\n"
+                                      "3. 复制 Request Headers 里 cookie: 后面的整段\n"
+                                      "4. 粘贴到下载页「抖音设置」里保存，再回来点下载")
+            return
+        cookie_file = cookie_file_for(dy_ck, ".douyin.com", "douyin")
     try:
         jobs[job_id].update(status="downloading", progress=3, title=f"正在解析{plat}链接…", platform=plat)
 
@@ -379,7 +445,7 @@ def do_download(job_id, url, use_cookies):
         info, meta = None, {}
         # ---- 第一步：yt-dlp 直接解析（支持 1755+ 站点）----
         try:
-            with yt_dlp.YoutubeDL(ydl_opts(job_id, use_cookies, hook)) as ydl:
+            with yt_dlp.YoutubeDL(ydl_opts(job_id, use_cookies, hook, cookie_file)) as ydl:
                 info = ydl.extract_info(url, download=True)
         except Exception as e1:
             first_err = str(e1)
@@ -395,7 +461,7 @@ def do_download(job_id, url, use_cookies):
                 cand = meta["candidates"][0]
             if cand:
                 try:
-                    with yt_dlp.YoutubeDL(ydl_opts(job_id, use_cookies, hook)) as ydl:
+                    with yt_dlp.YoutubeDL(ydl_opts(job_id, use_cookies, hook, cookie_file)) as ydl:
                         info = ydl.extract_info(cand, download=True)
                 except Exception:
                     info = None
@@ -420,6 +486,10 @@ def do_download(job_id, url, use_cookies):
                         "微信视频号不支持：其视频地址经过加密并绑定微信客户端，"
                         "任何第三方工具（包括本应用）都无法解析。"
                         "建议在微信里打开视频号内容，用手机录屏或让对方发原视频文件。")
+                if plat == "抖音":
+                    raise RuntimeError(
+                        "抖音解析失败：Cookie 可能已过期，或该链接不是视频作品。\n"
+                        "请重新复制一次抖音 Cookie（电脑浏览器打开 douyin.com → F12 → Network → 复制 cookie）粘贴保存后再试。")
                 if plat == "快手":
                     raise RuntimeError(
                         "快手解析失败：快手对分享页做了强反爬限制。"
@@ -481,11 +551,16 @@ def api_info():
 @app.get("/api/config")
 def api_config_get():
     ck = (config.get("yuanbao_cookie") or "").strip()
+    dy = (config.get("douyin_cookie") or "").strip()
     masked = ""
     if ck:
         # 只回显首尾，避免整段凭证暴露在页面上
         masked = (ck[:24] + "…" + ck[-8:]) if len(ck) > 40 else "已配置"
-    return jsonify({"channels_cookie_set": bool(ck), "channels_cookie_preview": masked})
+    dy_masked = ""
+    if dy:
+        dy_masked = (dy[:24] + "…" + dy[-8:]) if len(dy) > 40 else "已配置"
+    return jsonify({"channels_cookie_set": bool(ck), "channels_cookie_preview": masked,
+                    "douyin_cookie_set": bool(dy), "douyin_cookie_preview": dy_masked})
 
 
 @app.post("/api/config")
@@ -494,8 +569,12 @@ def api_config_set():
     data = request.json or {}
     if "yuanbao_cookie" in data:
         config["yuanbao_cookie"] = (data.get("yuanbao_cookie") or "").strip()
-        save_json(CONFIG_FILE, config)
-    return jsonify({"ok": True, "channels_cookie_set": bool(config.get("yuanbao_cookie"))})
+    if "douyin_cookie" in data:
+        config["douyin_cookie"] = (data.get("douyin_cookie") or "").strip()
+    save_json(CONFIG_FILE, config)
+    return jsonify({"ok": True,
+                    "channels_cookie_set": bool(config.get("yuanbao_cookie")),
+                    "douyin_cookie_set": bool(config.get("douyin_cookie"))})
 
 
 def convert_local_file(jid, src_path, orig_name):
@@ -571,7 +650,9 @@ def api_download():
     data = request.json or {}
     raw = data.get("urls") or data.get("url") or ""
     if isinstance(raw, str):
-        urls = [u.strip() for u in re.split(r"[\n\r\s]+", raw) if u.strip()]
+        # 兼容抖音等「口令+链接」混合文本
+        urls = re.findall(r"https?://[^\s，。！？、；：\"'<>（）()]+", raw)
+        urls = [u.rstrip("),.;!?") for u in urls]
     else:
         urls = [str(u).strip() for u in raw if str(u).strip()]
     use_cookies = bool(data.get("cookies"))

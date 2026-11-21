@@ -9,3 +9,5 @@ __pycache__/
 releases/
 config.json
 output-dl/
+.douyin_cookies.txt
+.dy_cookies.txt

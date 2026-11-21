@@ -92,6 +92,26 @@
       </div>
     </details>
 
+    <!-- 抖音专用 -->
+    <details class="group wx-panel" id="dyPanel">
+      <summary>抖音解析设置 <span class="wx-badge" id="dyBadge">未配置</span></summary>
+      <div class="group-body">
+        <p class="wx-tip">抖音接口加了签名校验，需要借一次浏览器 Cookie 才能解析，只需配置一次：</p>
+        <ol class="wx-steps">
+          <li>电脑浏览器打开 <b>douyin.com</b>（登录或不登录都可以）</li>
+          <li>按 F12 → <b>Network</b> → 刷新页面 → 点任意一条请求</li>
+          <li>在 <b>Request Headers</b> 找到 <b>cookie:</b> 整段复制</li>
+          <li>粘贴到下面保存，回上面贴抖音链接即可下载</li>
+        </ol>
+        <textarea id="dyCookieInput" rows="3" placeholder="粘贴 cookie: 后面的整段内容…" autocomplete="off"></textarea>
+        <div class="wx-actions">
+          <button id="dySaveBtn" class="btn gray sm">保存 Cookie</button>
+          <button id="dyClearBtn" class="btn gray sm">清除</button>
+          <span class="wx-status" id="dyStatus"></span>
+        </div>
+      </div>
+    </details>
+
     <!-- 万能兜底 -->
     <div class="upload-row">
       <input type="file" id="fileInput" accept="video/*,audio/*" hidden>
