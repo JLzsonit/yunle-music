@@ -6,31 +6,37 @@ const DB_NAME = "yunle", DB_STORE = "songs";
 let db = null;
 function openDB() {
   return new Promise((res, rej) => {
+    let done = false;
+    const finish = (fn, arg) => { if (!done) { done = true; clearTimeout(guard); fn(arg); } };
+    const guard = setTimeout(() => finish(rej, new Error("IndexedDB 响应超时")), 3000);
     const rq = indexedDB.open(DB_NAME, 1);
     rq.onupgradeneeded = () => rq.result.createObjectStore(DB_STORE, { keyPath: "id" });
-    rq.onsuccess = () => { db = rq.result; res(db); };
-    rq.onerror = () => rej(rq.error);
+    rq.onsuccess = () => { db = rq.result; finish(res, db); };
+    rq.onerror = () => finish(rej, rq.error);
+    rq.onblocked = () => finish(rej, new Error("IndexedDB 被占用"));
   });
 }
+/* IndexedDB 在个别 WebView / 无头环境下回调可能不触发，统一加超时兜底 */
+const idbGuard = (p) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), 2500))]);
 const idb = {
-  put: (o) => new Promise((res, rej) => {
+  put: (o) => idbGuard(new Promise((res, rej) => {
     const t = db.transaction(DB_STORE, "readwrite");
     t.objectStore(DB_STORE).put(o);
     t.oncomplete = res; t.onerror = () => rej(t.error);
-  }),
-  get: (id) => new Promise((res) => {
+  })),
+  get: (id) => idbGuard(new Promise((res) => {
     const rq = db.transaction(DB_STORE).objectStore(DB_STORE).get(id);
     rq.onsuccess = () => res(rq.result); rq.onerror = () => res(null);
-  }),
-  del: (id) => new Promise((res) => {
+  })),
+  del: (id) => idbGuard(new Promise((res) => {
     const t = db.transaction(DB_STORE, "readwrite");
     t.objectStore(DB_STORE).delete(id);
     t.oncomplete = res; t.onerror = res;
-  }),
-  all: () => new Promise((res) => {
+  })),
+  all: () => idbGuard(new Promise((res) => {
     const rq = db.transaction(DB_STORE).objectStore(DB_STORE).getAll();
     rq.onsuccess = () => res(rq.result || []); rq.onerror = () => res([]);
-  }),
+  })),
 };
 
 /* ---------- 状态 ---------- */
@@ -128,6 +134,18 @@ $("libEmpty").addEventListener("click", (e) => { if (e.target.closest("#goDlBtn"
 
 /* ---------- 下载（支持多链接批量） ---------- */
 let jobTimer = null;
+let dlActive = false;       // 本次提交后才有状态反馈，避免启动时被历史任务干扰
+let dlSeenError = "";
+function setDlStatus(text, kind, pct) {
+  const box = $("dlStatus");
+  if (!box) return;
+  box.hidden = !text;
+  box.className = "dl-status" + (kind ? " " + kind : "");
+  $("dlStatusText").textContent = text || "";
+  const bar = $("dlBarWrap");
+  if (pct === undefined || pct === null) bar.hidden = true;
+  else { bar.hidden = false; $("dlBar").style.width = Math.max(0, Math.min(100, pct)) + "%"; }
+}
 function pollJobs() {
   fetch(api("/api/jobs")).then((r) => r.json()).then((jobs) => {
     $("jobGroup").hidden = !jobs.length;
@@ -136,16 +154,49 @@ function pollJobs() {
       let st = "", cls = "";
       if (j.status === "error") { st = `✗ ${esc(j.error || "失败")}`; cls = "err"; }
       else if (j.status === "done") { st = "✓ 已加入曲库"; cls = "ok"; }
-      else st = `${j.status === "queued" ? "排队中" : j.status === "processing" ? "转换音频中" : "下载中"} ${j.progress}%${j.speed ? " · " + fmtSpeed(j.speed) : ""}`;
+      else {
+        const label = j.status === "queued" ? "排队中" : j.status === "processing" ? "转换音频中" : "下载中";
+        st = `${label} ${j.progress}%${j.speed ? " · " + fmtSpeed(j.speed) : ""}${j.stage ? " · " + esc(j.stage) : ""}`;
+      }
       return `<li class="job-item"><div class="job-title">${j.platform ? `<span class="plat-tag">${esc(j.platform)}</span>` : ""}${esc(j.title)}</div>
         <div class="job-status ${cls}">${st}</div>
         ${j.status !== "done" && j.status !== "error" ? `<div class="progress"><i style="width:${j.progress}%"></i></div>` : ""}</li>`;
     }).join("");
-    const busy = jobs.some((j) => ["queued", "downloading", "processing"].includes(j.status));
-    if (busy) {
-      if (!jobTimer) jobTimer = setInterval(pollJobs, 1500);
-    } else { clearInterval(jobTimer); jobTimer = null; refreshAll(); }
-  }).catch(() => {});
+
+    const busy = jobs.filter((j) => ["queued", "downloading", "processing"].includes(j.status));
+    const errs = jobs.filter((j) => j.status === "error");
+    if (busy.length) {
+      const top = busy[busy.length - 1];
+      const label = top.status === "queued" ? "排队中" : top.status === "processing" ? "转换音频中" : "下载中";
+      const extra = busy.length > 1 ? `（共 ${busy.length} 个任务）` : "";
+      setDlStatus(`${label}：${esc(top.title || "正在解析链接")} · ${top.progress}%${top.stage ? " · " + esc(top.stage) : ""}${extra}`, "run", top.progress);
+      if (!jobTimer) jobTimer = setInterval(pollJobs, 1200);
+    } else {
+      clearInterval(jobTimer); jobTimer = null;
+      if (dlActive) {
+        dlActive = false;
+        if (errs.length) {
+          const e = errs.slice(-1)[0];
+          setDlStatus(e.error || "下载失败", "err");
+          if (dlSeenError !== e.id) {
+            dlSeenError = e.id;
+            toast("下载失败，请看上方红字说明");
+            if (/cookie|Cookie|元宝/i.test(e.error || "")) {
+              const p = $("wxPanel"); if (p) p.open = true;
+              p?.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }
+        } else if (jobs.length) {
+          setDlStatus("✓ 下载完成，已加入曲库", "ok");
+          toast("下载完成，已加入曲库");
+        }
+      }
+      refreshAll();
+    }
+  }).catch(() => {
+    clearInterval(jobTimer); jobTimer = null;
+    if (dlActive) { dlActive = false; setDlStatus("连接服务器失败，请检查网络后重试", "err"); }
+  });
 }
 function fmtSpeed(b) { return b > 1048576 ? (b / 1048576).toFixed(1) + "MB/s" : Math.round(b / 1024) + "KB/s"; }
 
@@ -159,19 +210,43 @@ $("downloadBtn").addEventListener("click", async () => {
     const p = $("wxPanel");
     if (p) p.open = true;
     $("wxPanel")?.scrollIntoView({ behavior: "smooth", block: "center" });
-    toast("视频号需要先配置一次元宝 Cookie（下面 4 步）");
+    setDlStatus("视频号链接需要先配置「元宝 Cookie」：按下面 4 步复制 Cookie 保存后，再点开始下载。", "err");
+    toast("视频号需要先配置一次元宝 Cookie");
+    return;
   }
   $("downloadBtn").disabled = true;
+  $("downloadBtn").textContent = "提交中…";
+  dlActive = true;
+  setDlStatus(`正在提交 ${urls.length} 个链接…`, "run", 0);
+  $("dlStatus")?.scrollIntoView({ behavior: "smooth", block: "center" });
   try {
     const r = await fetch(api("/api/download"), {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ urls, cookies: $("cookieChk").checked }),
     });
-    const data = await r.json();
-    if (data.error) toast(data.error);
-    else { toast(`已提交 ${urls.length} 个链接`); $("urlInput").value = ""; pollJobs(); }
-  } catch { toast("无法连接服务器"); }
+    const txt = await r.text();
+    let data = null;
+    try { data = JSON.parse(txt); } catch {}
+    if (!r.ok || !data) {
+      dlActive = false;
+      setDlStatus(`提交失败（HTTP ${r.status}）` + (r.status === 403 ? "：当前安装的是旧版应用，请安装最新版 APK" : "：请稍后重试"), "err");
+      toast("提交失败，请看上方提示");
+    } else if (data.error) {
+      dlActive = false;
+      setDlStatus(data.error, "err");
+      toast(data.error);
+    } else {
+      $("urlInput").value = "";
+      setDlStatus(`已提交 ${urls.length} 个链接，正在解析…`, "run", 2);
+      pollJobs();
+    }
+  } catch {
+    dlActive = false;
+    setDlStatus("无法连接服务器，请检查网络（或确认已安装最新版 APK）", "err");
+    toast("无法连接服务器");
+  }
   $("downloadBtn").disabled = false;
+  $("downloadBtn").textContent = "开始下载";
 });
 $("pasteBtn").addEventListener("click", async () => {
   try { $("urlInput").value = await navigator.clipboard.readText(); toast("已粘贴"); }
@@ -435,7 +510,7 @@ if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catc
 async function refreshAll() {
   try {
     await loadLibrary(); await loadPlaylists();
-    const off = await idb.all();
+    const off = (await idb.all()) || [];
     state.offlineIds = new Set(off.map((o) => o.id).filter((id) => state.library.some((s) => s.id === id)));
     renderLibrary(); renderPlaylists();
   } catch { setOnline(false); }
@@ -451,7 +526,10 @@ async function refreshAll() {
   await refreshAll();
   await loadWxConfig();
   pollJobs();
-})();
+})().catch((e) => {
+  document.title = "INIT_ERR: " + (e && e.message || e);
+  toast("初始化异常：" + (e && e.message || e));
+});
 
 /* ---------- 视频号 Cookie 设置 ---------- */
 async function loadWxConfig() {
@@ -506,12 +584,19 @@ $("fileInput")?.addEventListener("change", async (e) => {
   toast(`正在上传 ${f.name}（${mb}MB）…`);
   const fd = new FormData();
   fd.append("file", f);
+  dlActive = true;
+  setDlStatus(`正在上传 ${f.name}（${mb}MB）…`, "run", 5);
+  $("dlStatus")?.scrollIntoView({ behavior: "smooth", block: "center" });
   try {
     const r = await fetch(api("/api/upload"), { method: "POST", body: fd });
     const d = await r.json();
-    if (d.error) toast(d.error);
-    else { toast("上传成功，正在转音频…"); pollJobs(); }
-  } catch { toast("上传失败，检查网络或文件大小"); }
+    if (d.error) { dlActive = false; setDlStatus(d.error, "err"); toast(d.error); }
+    else { setDlStatus("上传成功，正在转换为 MP3…", "run", 20); pollJobs(); }
+  } catch {
+    dlActive = false;
+    setDlStatus("上传失败：请检查网络或文件大小", "err");
+    toast("上传失败，检查网络或文件大小");
+  }
   e.target.value = "";
 });
 
