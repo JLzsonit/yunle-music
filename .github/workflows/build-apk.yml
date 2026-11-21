@@ -43,6 +43,42 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      # 固定签名 + 版本号自动递增：
+      #   1) 仓库内的 debug.keystore 保证每次构建签名一致 → 可直接覆盖安装升级，无需卸载重装
+      #   2) versionCode = run number（单调递增），versionName = 1.2.<run_number>
+      - name: Stable signature & auto version bump
+        run: |
+          cp keystore/debug.keystore android/app/debug.keystore
+          python3 - <<'EOF'
+          import re
+          p = "android/app/build.gradle"
+          s = open(p, encoding="utf-8").read()
+          n = "${{ github.run_number }}"
+          s = re.sub(r"versionCode \d+", f"versionCode {n}", s)
+          s = re.sub(r'versionName "[^"]*"', f'versionName "1.2.{n}"', s)
+          s += """
+
+          android {
+              signingConfigs {
+                  stable {
+                      storeFile file('debug.keystore')
+                      storePassword 'android'
+                      keyAlias 'androiddebugkey'
+                      keyPassword 'android'
+                  }
+              }
+              buildTypes {
+                  debug {
+                      signingConfig signingConfigs.stable
+                  }
+              }
+          }
+          """
+          open(p, "w", encoding="utf-8").write(s)
+          print("versionCode/versionName/signingConfig applied")
+          EOF
+          grep -n "versionCode\|versionName" android/app/build.gradle
+
       - name: Replace launcher icon
         run: |
           python3 - <<'EOF'
@@ -82,9 +118,9 @@ jobs:
       - name: Rename artifact
         run: |
           mkdir -p output
-          cp android/app/build/outputs/apk/debug/app-debug.apk output/云乐-yunle-v1.1.1.apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk output/云乐-yunle-v1.2.${{ github.run_number }}.apk
 
       - uses: actions/upload-artifact@v4
         with:
           name: yunle-android-apk
-          path: output/云乐-yunle-v1.1.1.apk
+          path: output/云乐-yunle-v1.2.${{ github.run_number }}.apk
