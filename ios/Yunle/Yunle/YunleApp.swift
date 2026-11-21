@@ -9,7 +9,6 @@ struct WebView: UIViewRepresentable {
         // 允许自动播放（音乐应用需要）
         config.mediaTypesRequiringUserActionForPlayback = []
         config.allowsInlineMediaPlayback = true
-        config.allowsPictureInPicturePlayback = true
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.allowsBackForwardNavigationGestures = true
         // 后台继续播放音频
